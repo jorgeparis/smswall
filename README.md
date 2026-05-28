@@ -4,18 +4,18 @@ A polling-based SMS display system that reads incoming messages from a GSM/SIM d
 
 ---
 
-## 🚀 Features
+## Features
 
-- 📩 Read SMS messages from GSM/SIM device (serial/USB)
-- 🔄 Polling-based updates (no WebSockets)
-- 🧠 SQLite storage
-- 🧵 Background SMS watcher thread
-- 🗑️ Delete old messages via API
-- 🌐 LAN accessible
+- Read SMS messages from GSM/SIM device (serial/USB)
+- Polling-based updates (no WebSockets)
+- SQLite storage
+- Background SMS watcher thread
+- Delete old messages via API
+- LAN accessible
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 [ GSM Device ]
@@ -34,7 +34,7 @@ A polling-based SMS display system that reads incoming messages from a GSM/SIM d
 
 ---
 
-## ⚙️ Backend Implementation
+## Backend Implementation
 
 ### Core Features
 
@@ -53,14 +53,14 @@ def startup():
 
 ---
 
-## 📡 API Endpoints
+## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| GET | /messages | Get all messages |
-| GET | /messages/new | Get unread messages |
-| POST | /messages/{file_id}/read | Mark a message as read |
-| DELETE | /messages/old?days=30 | Delete messages older than X days |
+| Method | Endpoint                 | Description                       |
+| ------ | ------------------------ | --------------------------------- |
+| GET    | /messages                | Get all messages                  |
+| GET    | /messages/new            | Get unread messages               |
+| POST   | /messages/{file_id}/read | Mark a message as read            |
+| DELETE | /messages/old?days=30    | Delete messages older than X days |
 
 ### Example: Delete old messages
 
@@ -70,7 +70,7 @@ curl -X DELETE "http://localhost:8000/messages/old?days=30"
 
 ---
 
-## 🔄 Frontend Polling Example
+## Frontend Polling Example
 
 ```javascript
 setInterval(async () => {
@@ -81,14 +81,14 @@ setInterval(async () => {
 
 ---
 
-## 🗄️ Database
+## Database
 
 - SQLite (`sms.db`)
 - Automatically managed
 
 ---
 
-## ⚙️ Setup
+## Setup
 
 ### Backend
 
@@ -108,7 +108,7 @@ npm start
 
 ---
 
-## 🌐 Deployment Notes
+## Deployment Notes
 
 - Bind backend to `0.0.0.0` for LAN access
 - Ensure firewall allows port 8000
@@ -116,7 +116,7 @@ npm start
 
 ---
 
-## ⚠️ Notes
+## Notes
 
 - Polling interval should be tuned (default: 3s)
 - DELETE endpoint supports 1–365 days
@@ -124,6 +124,6 @@ npm start
 
 ---
 
-## 📜 License
+## License
 
 MIT
