@@ -1,4 +1,4 @@
-# 📱 SMS Wall
+# SMS Wall
 
 A polling-based SMS display system that reads incoming messages from a GSM/SIM device and serves them via a FastAPI backend to a React frontend.
 
