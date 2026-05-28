@@ -1,18 +1,17 @@
 # 📱 SMS Wall
 
-A real-time SMS display system that reads incoming messages from a GSM/SIM device and displays them on a web interface using a FastAPI backend and React frontend.
+A polling-based SMS display system that reads incoming messages from a GSM/SIM device and serves them via a FastAPI backend to a React frontend.
 
 ---
 
 ## 🚀 Features
 
-- 📩 Read SMS messages from a GSM/SIM device (serial/USB)
-- 🔄 Frontend polling for near real-time updates
-- 🧠 Lightweight SQLite database
-- 📊 Message statistics
-- 🔔 Notifications for new messages
-- 🧹 Automatic cleanup of old messages
-- 🌐 Accessible over Local Area Network (LAN)
+- 📩 Read SMS messages from GSM/SIM device (serial/USB)
+- 🔄 Polling-based updates (no WebSockets)
+- 🧠 SQLite storage
+- 🧵 Background SMS watcher thread
+- 🗑️ Delete old messages via API
+- 🌐 LAN accessible
 
 ---
 
@@ -22,7 +21,7 @@ A real-time SMS display system that reads incoming messages from a GSM/SIM devic
 [ GSM Device ]
        │
        ▼
-[ SMS Watcher (Python Thread) ]
+[ SMS Watcher Thread ]
        │
        ▼
 [ FastAPI Backend ]
@@ -35,169 +34,96 @@ A real-time SMS display system that reads incoming messages from a GSM/SIM devic
 
 ---
 
-## 📦 Tech Stack
+## ⚙️ Backend Implementation
 
-### Backend
-- Python
-- FastAPI
-- SQLite
+### Core Features
 
-### Frontend
-- React (Hooks)
-- Native CSS
-- React Hot Toast
+- Background watcher starts on app startup
+- REST-based API (no WebSockets)
+- CORS enabled for frontend integration
 
----
+### Startup Thread
 
-## 📁 Project Structure
-
-```
-sms-wall/
-│
-├── backend/
-│   ├── main.py
-│   ├── watcher.py
-│   ├── storage.py
-│   ├── sms.db
-│   └── requirements.txt
-│
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── App.js
-│   │   └── styles.css
-│   └── package.json
-│
-└── README.md
+```python
+@app.on_event("startup")
+def startup():
+    thread = threading.Thread(target=start_watcher, daemon=True)
+    thread.start()
 ```
 
 ---
 
-## ⚙️ Backend Setup (FastAPI)
-
-### 1. Install dependencies
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-### 2. Run server
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 3. API Endpoints
+## 📡 API Endpoints
 
 | Method | Endpoint | Description |
 |--------|---------|-------------|
 | GET | /messages | Get all messages |
 | GET | /messages/new | Get unread messages |
-| POST | /messages/read | Mark all messages as read |
-| DELETE | /messages/old | Delete old messages |
+| POST | /messages/{file_id}/read | Mark a message as read |
+| DELETE | /messages/old?days=30 | Delete messages older than X days |
 
----
+### Example: Delete old messages
 
-## 💻 Frontend Setup (React)
-
-### 1. Install dependencies
 ```bash
-cd frontend
-npm install
-```
-
-### 2. Run development server
-```bash
-npm start
-```
-
-### 3. Configure API base URL
-
-In App.js:
-```javascript
-const API_BASE = "http://<YOUR_SERVER_IP>:8000";
+curl -X DELETE "http://localhost:8000/messages/old?days=30"
 ```
 
 ---
 
-## 🔄 Polling (Real-Time Updates)
+## 🔄 Frontend Polling Example
 
 ```javascript
 setInterval(async () => {
-  const res = await fetch(`${API_BASE}/messages/new`);
+  const res = await fetch("http://localhost:8000/messages/new");
   const data = await res.json();
-
-  // Update UI with new messages
 }, 3000);
 ```
 
 ---
 
-## 📡 SMS Watcher
+## 🗄️ Database
 
-- Monitors the GSM device using AT commands
-- Reads incoming SMS messages
-- Parses message data
-- Stores messages in SQLite
+- SQLite (`sms.db`)
+- Automatically managed
 
 ---
 
-## 🗄️ Database (SQLite)
-
-- File: sms.db
-- Automatically created on first run
-
-### View database manually:
-```bash
-sqlite3 sms.db
-.tables
-SELECT * FROM messages;
-```
-
----
-
-## 🌐 Deployment (Windows Server / LAN)
+## ⚙️ Setup
 
 ### Backend
+
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Frontend (build)
+### Frontend
+
 ```bash
-npm run build
+cd frontend
+npm install
+npm start
 ```
-
-Serve using IIS, Nginx, or a static server.
-
-Access via:
-http://<SERVER_IP>:3000
 
 ---
 
-## 🔒 Production Improvements
+## 🌐 Deployment Notes
 
-- Use Gunicorn + Uvicorn workers
-- Add reverse proxy (Nginx or IIS)
-- Enable proper CORS configuration
-- Add authentication
-- Use PostgreSQL for scaling
+- Bind backend to `0.0.0.0` for LAN access
+- Ensure firewall allows port 8000
+- Use IIS/Nginx for frontend hosting
 
 ---
 
-## ⚠️ Troubleshooting
+## ⚠️ Notes
 
-### Messages not showing
-- Check API URL
-- Confirm backend is running
-- Inspect browser console
-
-### No SMS detected
-- Ensure SIM is inserted
-- Verify serial port
-- Test AT commands
+- Polling interval should be tuned (default: 3s)
+- DELETE endpoint supports 1–365 days
+- Each message is identified by `file_id`
 
 ---
 
 ## 📜 License
 
-MIT License
+MIT
