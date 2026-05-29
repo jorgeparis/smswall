@@ -1,11 +1,12 @@
 # SMS Wall System - Complete Documentation
 
-📱 **Overview**  
+**Overview**  
 SMS Wall is a full-stack SMS management system that provides real-time SMS monitoring, user authentication, role-based access control, and message management capabilities. The system consists of a FastAPI backend and a React frontend with JWT authentication.
 
-## 🚀 Features
+## Features
 
-### 🔐 Authentication & Security
+### Authentication & Security
+
 - **JWT-based Authentication** - Secure token-based authentication
 - **Session Management** - Tokens stored in `sessionStorage` (clears on tab close)
 - **Role-Based Access Control (RBAC)** - Admin and User roles with different permissions
@@ -13,7 +14,8 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 - **Session Expiry Handling** - Automatic redirect to login on token expiration
 - **CORS Protection** - Configured cross-origin resource sharing
 
-### 👥 User Management
+### User Management
+
 - User Registration
 - User Login
 - User Profile
@@ -22,7 +24,8 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 - Role Management (promote/demote)
 - Account Status (enable/disable)
 
-### 📨 Message Management
+### Message Management
+
 - Real-time SMS Reception via file watcher
 - Message Listing with pagination
 - Unread Messages tab
@@ -32,7 +35,8 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 - Message Preview before deletion
 - Filtering and Search
 
-### 📊 Statistics & Analytics
+### Statistics & Analytics
+
 - Total Messages Count
 - Unread Messages Counter
 - Read Rate Percentage
@@ -41,7 +45,8 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 - Storage Usage
 - Live Updates (every 5 seconds)
 
-### 🎨 User Interface
+### User Interface
+
 - Modern Dark Theme with gradients
 - Fully Responsive
 - Real-time Indicators
@@ -53,54 +58,61 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 ## 🔌 Backend API Endpoints
 
 ### Authentication
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| POST | `/auth/register` | Register new user | Public |
-| POST | `/auth/login` | Login and get JWT | Public |
-| POST | `/auth/refresh` | Refresh token | Authenticated |
-| POST | `/auth/change-password` | Change password | Authenticated |
-| GET | `/auth/me` | Get current user | Authenticated |
+
+| Method | Endpoint                | Description       | Access        |
+| ------ | ----------------------- | ----------------- | ------------- |
+| POST   | `/auth/register`        | Register new user | Public        |
+| POST   | `/auth/login`           | Login and get JWT | Public        |
+| POST   | `/auth/refresh`         | Refresh token     | Authenticated |
+| POST   | `/auth/change-password` | Change password   | Authenticated |
+| GET    | `/auth/me`              | Get current user  | Authenticated |
 
 ### Messages
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| GET | `/messages` | Get all messages (paginated) | Authenticated |
-| GET | `/messages/new` | Get unread messages | Authenticated |
-| POST | `/messages/{file_id}/read` | Mark as read | Authenticated |
-| DELETE | `/messages/{message_id}` | Delete message | Authenticated |
-| DELETE | `/messages/old` | Bulk delete old | Admin |
-| GET | `/messages/old/preview` | Preview bulk delete | Admin |
+
+| Method | Endpoint                   | Description                  | Access        |
+| ------ | -------------------------- | ---------------------------- | ------------- |
+| GET    | `/messages`                | Get all messages (paginated) | Authenticated |
+| GET    | `/messages/new`            | Get unread messages          | Authenticated |
+| POST   | `/messages/{file_id}/read` | Mark as read                 | Authenticated |
+| DELETE | `/messages/{message_id}`   | Delete message               | Authenticated |
+| DELETE | `/messages/old`            | Bulk delete old              | Admin         |
+| GET    | `/messages/old/preview`    | Preview bulk delete          | Admin         |
 
 ### SMS Sending
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| POST | `/messages/send` | Send SMS | Authenticated |
-| POST | `/messages/send/batch` | Batch send | Authenticated |
-| GET | `/messages/sent` | Sent history | Authenticated |
+
+| Method | Endpoint               | Description  | Access        |
+| ------ | ---------------------- | ------------ | ------------- |
+| POST   | `/messages/send`       | Send SMS     | Authenticated |
+| POST   | `/messages/send/batch` | Batch send   | Authenticated |
+| GET    | `/messages/sent`       | Sent history | Authenticated |
 
 ### Admin
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| GET | `/admin/users` | List users | Admin |
-| PUT | `/admin/users/{id}/role` | Update role | Admin |
-| PUT | `/admin/users/{id}/toggle-status` | Toggle active | Admin |
-| DELETE | `/admin/users/{id}` | Delete user | Admin |
+
+| Method | Endpoint                          | Description   | Access |
+| ------ | --------------------------------- | ------------- | ------ |
+| GET    | `/admin/users`                    | List users    | Admin  |
+| PUT    | `/admin/users/{id}/role`          | Update role   | Admin  |
+| PUT    | `/admin/users/{id}/toggle-status` | Toggle active | Admin  |
+| DELETE | `/admin/users/{id}`               | Delete user   | Admin  |
 
 ### System
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| GET | `/health` | Health check | Public |
-| GET | `/stats` | Statistics | Authenticated |
-| GET | `/docs` | Swagger UI | Public |
 
-## 📡 Real-time Features
+| Method | Endpoint  | Description  | Access        |
+| ------ | --------- | ------------ | ------------- |
+| GET    | `/health` | Health check | Public        |
+| GET    | `/stats`  | Statistics   | Authenticated |
+| GET    | `/docs`   | Swagger UI   | Public        |
+
+## Real-time Features
+
 - SMS File Watcher (event-driven)
 - Auto-refresh every 5 seconds
 - Live Connection Status
 - New Message Alerts (visual + sound)
 - Pulsing Unread Badges
 
-## 🛡️ Security Features
+## Security Features
+
 - JWT Token Authentication
 - SHA-256 Password Hashing
 - Role-based Authorization
@@ -108,9 +120,10 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 - SQL Injection Protection
 - Session Management
 
-## 📦 Database Schema
+## Database Schema
 
 ### Users Table
+
 ```sql
 - id (PK)
 - username (Unique)
@@ -124,6 +137,7 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 ```
 
 ### SMS Messages Table
+
 ```sql
 - id (PK)
 - file_id (Unique)
@@ -137,6 +151,7 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 ```
 
 ### Send Logs Table
+
 ```sql
 - id (PK)
 - message_id
@@ -147,19 +162,21 @@ SMS Wall is a full-stack SMS management system that provides real-time SMS monit
 - sent_at, delivered_at
 ```
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 **Backend**: FastAPI, SQLAlchemy, SQLite, JWT, Uvicorn, Watchdog  
 **Frontend**: React, Tailwind CSS, Lucide React, React Hot Toast
 
-## 🚦 Getting Started
+## Getting Started
 
 ### Prerequisites
+
 - Python 3.8+
 - Node.js 16+
 - npm/yarn
 
 ### Backend Setup
+
 ```bash
 cd sms_backend
 python -m venv venv
@@ -178,6 +195,7 @@ python main.py
 ```
 
 ### Frontend Setup
+
 ```bash
 cd sms_frontend
 npm install
@@ -188,15 +206,18 @@ npm start
 **Username**: `admin`  
 **Password**: `admin123`
 
-**⚠️ Change password immediately after first login.**
+**Change password immediately after first login.**
 
-## 📱 Usage Guide
+## Usage Guide
+
 - Login → View messages in "All Messages" or "Live Inbox"
 - Click messages to mark as read
 - Admin users have access to bulk cleanup and user management
 
-## 🔧 Configuration
+## Configuration
+
 Key environment variables:
+
 ```env
 SECRET_KEY=...
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
@@ -204,15 +225,18 @@ DATABASE_URL=sqlite:///./sms_messages.db
 REACT_APP_API_URL=http://localhost:8000
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
+
 See full documentation for common issues.
 
-## 📈 Performance
+## Performance
+
 - Auto-refresh: 5 seconds
 - Pagination: 500 messages/page
 - Token expiry: 24 hours
 
-## 🔮 Future Enhancements
+## Future Enhancements
+
 - Twilio SMS integration
 - WebSocket real-time
 - PostgreSQL support
@@ -223,7 +247,7 @@ See full documentation for common issues.
 
 **Version**: 2.1.0  
 **Last Updated**: May 2026  
-**Status**: Production Ready ✅
+**Status**: Production Ready
 
 **License**: Proprietary and Confidential
 
