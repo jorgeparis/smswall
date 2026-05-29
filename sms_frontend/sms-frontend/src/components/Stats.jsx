@@ -1,5 +1,18 @@
-import { AlertTriangle, CheckCircle, Clock, Trash2, X, TrendingUp, Calendar, Filter, Shield, Bell, Zap, Database } from "lucide-react";
-import { useState, useEffect } from "react";
+import {
+  AlertTriangle,
+  Bell,
+  Calendar,
+  CheckCircle,
+  Clock,
+  Database,
+  Lock,
+  Shield,
+  Trash2,
+  TrendingUp,
+  X,
+  Zap
+} from "lucide-react";
+import { useEffect, useState } from "react";
 
 export default function Stats({
   totalMessages = 0,
@@ -7,7 +20,8 @@ export default function Stats({
   onDeleteOld,
   readRate = 0,
   weeklyTrend = 0,
-  storageUsed = 0
+  storageUsed = 0,
+  userRole = "user" // Add userRole prop to check if admin
 }) {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteDays, setDeleteDays] = useState(30);
@@ -16,6 +30,7 @@ export default function Stats({
   const [deletedCount, setDeletedCount] = useState(0);
   const [showConfirmAnimation, setShowConfirmAnimation] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState(null);
+  const [showAdminRequiredModal, setShowAdminRequiredModal] = useState(false);
 
   const presets = [
     { label: "1 Week", days: 7 },
@@ -25,17 +40,49 @@ export default function Stats({
     { label: "1 Year", days: 365 }
   ];
 
+  // Check if user is admin
+  const isAdmin = userRole === "admin";
+
+  // Helper function to get auth token
+  const getAuthToken = () => {
+    return (
+      sessionStorage.getItem("access_token") ||
+      localStorage.getItem("access_token")
+    );
+  };
+
   const handleDeleteOld = async () => {
+    // Double-check admin permission before proceeding
+    if (!isAdmin) {
+      setShowAdminRequiredModal(true);
+      return;
+    }
+
     setIsDeleting(true);
     setShowConfirmAnimation(true);
-    
+
     try {
+      const token = getAuthToken();
+
+      if (!token) {
+        throw new Error("No authentication token found");
+      }
+
       const response = await fetch(
         `http://localhost:8000/messages/old?days=${deleteDays}`,
         {
-          method: "DELETE"
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          }
         }
       );
+
+      // Handle unauthorized
+      if (response.status === 401) {
+        throw new Error("Session expired. Please login again.");
+      }
 
       const result = await response.json();
 
@@ -46,13 +93,23 @@ export default function Stats({
 
         setTimeout(() => setShowSuccess(false), 5000);
 
-        onDeleteOld?.(); // Refresh parent
+        if (onDeleteOld) {
+          onDeleteOld(deleteDays); // Pass days to refresh parent
+        }
       } else {
         throw new Error(result.message || "Failed to delete messages");
       }
     } catch (error) {
       console.error(error);
-      alert("Backend connection error. Could not delete old messages.");
+      if (error.message.includes("Session expired")) {
+        alert("Session expired. Please login again.");
+        // Clear session and redirect
+        sessionStorage.removeItem("access_token");
+        sessionStorage.removeItem("user");
+        window.location.href = "/login";
+      } else {
+        alert("Backend connection error. Could not delete old messages.");
+      }
     } finally {
       setIsDeleting(false);
       setShowConfirmAnimation(false);
@@ -73,8 +130,12 @@ export default function Stats({
   };
 
   const getTrendIcon = () => {
-    if (weeklyTrend > 0) return <TrendingUp className="text-emerald-400" size={14} />;
-    if (weeklyTrend < 0) return <TrendingUp className="text-red-400 transform rotate-180" size={14} />;
+    if (weeklyTrend > 0)
+      return <TrendingUp className="text-emerald-400" size={14} />;
+    if (weeklyTrend < 0)
+      return (
+        <TrendingUp className="text-red-400 transform rotate-180" size={14} />
+      );
     return null;
   };
 
@@ -91,17 +152,29 @@ export default function Stats({
   return (
     <>
       <div className="bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-800 rounded-3xl p-6 shadow-2xl">
-        {/* Header */}
+        {/* Header with Admin Badge */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
               <Database className="text-white" size={20} />
             </div>
             <h2 className="text-xl font-bold text-white">Message Analytics</h2>
+            {isAdmin && (
+              <div className="ml-3 px-2 py-1 bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 rounded-lg">
+                <div className="flex items-center gap-1">
+                  <Shield size={12} className="text-purple-400" />
+                  <span className="text-xs font-semibold text-purple-300">
+                    Admin Access
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            <span className="text-xs font-mono text-gray-500 uppercase tracking-wider">Live</span>
+            <span className="text-xs font-mono text-gray-500 uppercase tracking-wider">
+              Live
+            </span>
           </div>
         </div>
 
@@ -116,16 +189,20 @@ export default function Stats({
                   <Clock className="text-white" size={24} />
                 </div>
                 <div className="flex-1">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Total Messages</div>
+                  <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
+                    Total Messages
+                  </div>
                   <div className="text-4xl font-bold text-white mt-1 tabular-nums">
                     {totalMessages.toLocaleString()}
                   </div>
                 </div>
               </div>
               <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div 
+                <div
                   className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min((totalMessages / 10000) * 100, 100)}%` }}
+                  style={{
+                    width: `${Math.min((totalMessages / 10000) * 100, 100)}%`
+                  }}
                 />
               </div>
             </div>
@@ -140,16 +217,20 @@ export default function Stats({
                   <AlertTriangle className="text-white" size={24} />
                 </div>
                 <div className="flex-1">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Unread Messages</div>
+                  <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
+                    Unread Messages
+                  </div>
                   <div className="text-4xl font-bold text-white mt-1 tabular-nums">
                     {unreadCount.toLocaleString()}
                   </div>
                 </div>
               </div>
               <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div 
+                <div
                   className="h-full bg-gradient-to-r from-amber-500 to-red-600 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min((unreadCount / 1000) * 100, 100)}%` }}
+                  style={{
+                    width: `${Math.min((unreadCount / 1000) * 100, 100)}%`
+                  }}
                 />
               </div>
             </div>
@@ -168,7 +249,7 @@ export default function Stats({
               {readRate || 0}%
             </div>
             <div className="mt-2 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-500"
                 style={{ width: `${readRate || 0}%` }}
               />
@@ -182,7 +263,8 @@ export default function Stats({
               {getTrendIcon()}
             </div>
             <div className="text-2xl font-bold text-white">
-              {weeklyTrend > 0 ? "+" : ""}{weeklyTrend || 0}
+              {weeklyTrend > 0 ? "+" : ""}
+              {weeklyTrend || 0}
             </div>
             <div className="text-xs text-gray-600 mt-1">vs last week</div>
           </div>
@@ -190,16 +272,37 @@ export default function Stats({
 
         {/* Advanced Actions */}
         <div className="space-y-3">
-          {/* Delete Button */}
-          <button
-            onClick={() => setShowDeleteModal(true)}
-            className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-red-500/10 to-red-600/10 hover:from-red-500/20 hover:to-red-600/20 border border-red-500/30 hover:border-red-500/50 text-red-400 py-4 rounded-2xl transition-all duration-300 overflow-hidden"
-          >
-            <div className="absolute inset-0 bg-red-500/0 group-hover:bg-red-500/5 transition-colors" />
-            <Trash2 size={20} className="group-hover:scale-110 transition-transform" />
-            <span className="font-medium">Clean Up Old Messages</span>
-            <Zap size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-          </button>
+          {/* Delete Button - Conditionally rendered based on admin status */}
+          {isAdmin ? (
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-red-500/10 to-red-600/10 hover:from-red-500/20 hover:to-red-600/20 border border-red-500/30 hover:border-red-500/50 text-red-400 py-4 rounded-2xl transition-all duration-300 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-red-500/0 group-hover:bg-red-500/5 transition-colors" />
+              <Trash2
+                size={20}
+                className="group-hover:scale-110 transition-transform"
+              />
+              <span className="font-medium">Clean Up Old Messages</span>
+              <Zap
+                size={14}
+                className="opacity-0 group-hover:opacity-100 transition-opacity"
+              />
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowAdminRequiredModal(true)}
+              className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-gray-500/10 to-gray-600/10 border border-gray-600/30 text-gray-500 py-4 rounded-2xl cursor-not-allowed transition-all duration-300"
+              disabled
+            >
+              <Lock size={20} className="opacity-50" />
+              <span className="font-medium">Admin Access Required</span>
+              <Shield
+                size={14}
+                className="opacity-0 group-hover:opacity-100 transition-opacity"
+              />
+            </button>
+          )}
 
           {/* Quick Stats Info */}
           {storageUsed > 0 && (
@@ -211,21 +314,71 @@ export default function Stats({
         </div>
       </div>
 
+      {/* Admin Required Modal */}
+      {showAdminRequiredModal && (
+        <div
+          className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[60] flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setShowAdminRequiredModal(false)}
+        >
+          <div
+            className="bg-gradient-to-br from-gray-900 to-gray-950 border border-amber-500/30 rounded-3xl w-full max-w-md overflow-hidden animate-slideUp"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-8 text-center">
+              <div className="mx-auto w-20 h-20 bg-gradient-to-br from-amber-500/20 to-amber-600/20 rounded-2xl flex items-center justify-center border-2 border-amber-500/30 mb-6">
+                <Shield className="text-amber-400" size={40} />
+              </div>
+
+              <h3 className="text-2xl font-bold text-white mb-3">
+                Admin Access Required
+              </h3>
+              <p className="text-gray-400 leading-relaxed mb-6">
+                This action is restricted to administrators only. Please contact
+                your system administrator if you need to delete old messages.
+              </p>
+
+              <button
+                onClick={() => setShowAdminRequiredModal(false)}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-medium transition-all active:scale-95"
+              >
+                Understood
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Enhanced Delete Confirmation Modal */}
       {showDeleteModal && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[60] flex items-center justify-center p-4 animate-fadeIn"
           onClick={() => setShowDeleteModal(false)}
         >
-          <div 
+          <div
             className="bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-700 rounded-3xl w-full max-w-md overflow-hidden animate-slideUp"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Admin Warning Banner */}
+            <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border-b border-purple-500/20 px-6 py-3 flex items-center gap-2">
+              <Shield size={16} className="text-purple-400" />
+              <span className="text-xs text-purple-300 font-medium">
+                Administrator Action
+              </span>
+            </div>
+
             {/* Animated Header */}
             <div className="relative p-8 text-center">
-              <div className={`absolute inset-0 bg-gradient-to-br from-red-500/10 to-transparent transition-opacity duration-500 ${showConfirmAnimation ? 'opacity-100' : 'opacity-0'}`} />
-              
-              <div className={`mx-auto w-20 h-20 bg-gradient-to-br from-red-500/20 to-red-600/20 rounded-2xl flex items-center justify-center border-2 border-red-500/30 mb-6 transition-all duration-300 ${showConfirmAnimation ? 'scale-110' : 'scale-100'}`}>
+              <div
+                className={`absolute inset-0 bg-gradient-to-br from-red-500/10 to-transparent transition-opacity duration-500 ${
+                  showConfirmAnimation ? "opacity-100" : "opacity-0"
+                }`}
+              />
+
+              <div
+                className={`mx-auto w-20 h-20 bg-gradient-to-br from-red-500/20 to-red-600/20 rounded-2xl flex items-center justify-center border-2 border-red-500/30 mb-6 transition-all duration-300 ${
+                  showConfirmAnimation ? "scale-110" : "scale-100"
+                }`}
+              >
                 {showConfirmAnimation ? (
                   <div className="animate-spin rounded-full w-8 h-8 border-2 border-red-400 border-t-transparent" />
                 ) : (
@@ -237,7 +390,8 @@ export default function Stats({
                 Delete Old Messages
               </h3>
               <p className="text-gray-400 leading-relaxed">
-                This action cannot be undone. Messages older than the selected period will be permanently removed from your system.
+                This action cannot be undone. Messages older than the selected
+                period will be permanently removed from your system.
               </p>
             </div>
 
@@ -247,7 +401,7 @@ export default function Stats({
                 <Calendar size={16} />
                 Delete messages older than
               </label>
-              
+
               {/* Preset Buttons */}
               <div className="grid grid-cols-3 gap-2 mb-4">
                 {presets.map((preset) => (
@@ -297,7 +451,10 @@ export default function Stats({
               {/* Warning */}
               <div className="mt-6 p-4 bg-amber-500/5 border border-amber-500/20 rounded-2xl">
                 <div className="flex items-start gap-3">
-                  <Bell size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                  <Bell
+                    size={16}
+                    className="text-amber-400 mt-0.5 flex-shrink-0"
+                  />
                   <div className="text-xs text-amber-400/80">
                     This will permanently delete approximately{" "}
                     <span className="font-bold text-amber-300">
@@ -352,7 +509,8 @@ export default function Stats({
               <div>
                 <p className="font-bold text-emerald-100">Cleanup Complete</p>
                 <p className="text-emerald-300/80 text-sm mt-1">
-                  Successfully deleted {deletedCount.toLocaleString()} old messages
+                  Successfully deleted {deletedCount.toLocaleString()} old
+                  messages
                 </p>
               </div>
               <button
@@ -368,10 +526,14 @@ export default function Stats({
 
       <style jsx>{`
         @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
         }
-        
+
         @keyframes slideUp {
           from {
             opacity: 0;
@@ -382,11 +544,11 @@ export default function Stats({
             transform: translateY(0);
           }
         }
-        
+
         .animate-fadeIn {
           animation: fadeIn 0.3s ease-out;
         }
-        
+
         .animate-slideUp {
           animation: slideUp 0.4s ease-out;
         }
