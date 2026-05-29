@@ -4,7 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import text  # ✅ Add this import
+from sqlalchemy import text
 import threading
 import logging
 import traceback
@@ -24,30 +24,40 @@ app = FastAPI(title="SMS Wall API", version="2.1.0")
 security = HTTPBearer()
 
 # JWT Configuration
-SECRET_KEY = os.getenv(
-    "SECRET_KEY", "your-secret-key-change-this-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(
-    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
-# CORS configuration
+# ==================== CORS Configuration - FIXED ====================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000",
-                   "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+    ],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # ==================== Pydantic Models ====================
 
-
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    email: str = Field(...,
-                       pattern=r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    email: str = Field(..., pattern=r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
     password: str = Field(..., min_length=6)
     full_name: Optional[str] = None
 
@@ -55,15 +65,12 @@ class UserCreate(BaseModel):
     @classmethod
     def username_alphanumeric(cls, v):
         if not v.replace('_', '').isalnum():
-            raise ValueError(
-                'Username must be alphanumeric or contain underscores')
+            raise ValueError('Username must be alphanumeric or contain underscores')
         return v
-
 
 class UserLogin(BaseModel):
     username: str
     password: str
-
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -71,37 +78,30 @@ class TokenResponse(BaseModel):
     expires_in: int
     user: Dict[str, Any]
 
-
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str = Field(..., min_length=6)
-
 
 class SendMessageRequest(BaseModel):
     to_number: str = Field(..., min_length=10, max_length=15)
     message: str = Field(..., min_length=1, max_length=1600)
     sender_id: Optional[str] = Field(None, max_length=11)
 
-
 class SendBatchRequest(BaseModel):
     messages: List[SendMessageRequest]
-
 
 class DeleteOldMessagesRequest(BaseModel):
     days: int = Field(30, ge=1, le=365)
 
 # ==================== Authentication Helpers ====================
 
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password against hash using SHA-256"""
     return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
-
 def get_password_hash(password: str) -> str:
     """Hash password using SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
-
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token"""
@@ -110,11 +110,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-
+    
     to_encode.update({"exp": expire, "iat": datetime.utcnow()})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
-
 
 def decode_token(token: str) -> dict:
     """Decode JWT token"""
@@ -126,49 +125,45 @@ def decode_token(token: str) -> dict:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Get current user from JWT token"""
     token = credentials.credentials
     payload = decode_token(token)
-
+    
     user_id = payload.get("sub")
     username = payload.get("username")
     role = payload.get("role")
-
+    
     if not user_id or not username:
         raise HTTPException(status_code=401, detail="Invalid token payload")
-
+    
     # Get user from database
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         db = SessionLocal()
         user = db.query(User).filter(User.id == int(user_id)).first()
         db.close()
-
+        
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-
+        
         if not user.is_active:
-            raise HTTPException(
-                status_code=403, detail="User account is disabled")
-
+            raise HTTPException(status_code=403, detail="User account is disabled")
+        
         return user
     except Exception as e:
         logger.error(f"Error getting current user: {e}")
         raise HTTPException(status_code=401, detail="Authentication failed")
-
 
 async def get_current_active_user(current_user=Depends(get_current_user)):
     """Get current active user"""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
-
 
 async def get_current_admin_user(current_user=Depends(get_current_active_user)):
     """Get current admin user (requires admin role)"""
@@ -181,52 +176,49 @@ async def get_current_admin_user(current_user=Depends(get_current_active_user)):
 
 # ==================== Auth Endpoints ====================
 
-
 @app.post("/auth/register", response_model=TokenResponse)
 async def register_user(user_data: UserCreate):
     """Register a new user"""
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         db = SessionLocal()
-
+        
         # Check if user exists
         existing_user = db.query(User).filter(
-            (User.username == user_data.username) | (
-                User.email == user_data.email)
+            (User.username == user_data.username) | (User.email == user_data.email)
         ).first()
-
+        
         if existing_user:
             db.close()
             raise HTTPException(
                 status_code=400,
                 detail="Username or email already exists"
             )
-
+        
         # Create new user
         new_user = User(
             username=user_data.username,
             email=user_data.email,
             password_hash=get_password_hash(user_data.password),
-            role="user",  # Default role
+            role="user",
             full_name=user_data.full_name,
             is_active=True,
             created_at=datetime.now()
         )
-
+        
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-
+        
         # Create access token
         access_token = create_access_token(
-            data={"sub": str(new_user.id),
-                  "username": new_user.username, "role": new_user.role}
+            data={"sub": str(new_user.id), "username": new_user.username, "role": new_user.role}
         )
-
+        
         db.close()
-
+        
         return {
             "access_token": access_token,
             "token_type": "bearer",
@@ -239,13 +231,12 @@ async def register_user(user_data: UserCreate):
                 "full_name": new_user.full_name
             }
         }
-
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(user_data: UserLogin):
@@ -253,37 +244,35 @@ async def login(user_data: UserLogin):
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         db = SessionLocal()
-        user = db.query(User).filter(
-            User.username == user_data.username).first()
-
+        user = db.query(User).filter(User.username == user_data.username).first()
+        
         if not user or not verify_password(user_data.password, user.password_hash):
             db.close()
             raise HTTPException(
                 status_code=401,
                 detail="Invalid username or password"
             )
-
+        
         if not user.is_active:
             db.close()
             raise HTTPException(
                 status_code=403,
                 detail="Account is disabled. Please contact administrator."
             )
-
+        
         # Update last login
         user.last_login = datetime.now()
         db.commit()
-
+        
         # Create access token
         access_token = create_access_token(
-            data={"sub": str(user.id), "username": user.username,
-                  "role": user.role}
+            data={"sub": str(user.id), "username": user.username, "role": user.role}
         )
-
+        
         db.close()
-
+        
         return {
             "access_token": access_token,
             "token_type": "bearer",
@@ -299,23 +288,21 @@ async def login(user_data: UserLogin):
                 "last_login": user.last_login.isoformat() if user.last_login else None
             }
         }
-
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/auth/refresh")
 async def refresh_token(current_user=Depends(get_current_user)):
     """Refresh access token"""
     try:
         new_token = create_access_token(
-            data={"sub": str(
-                current_user.id), "username": current_user.username, "role": current_user.role}
+            data={"sub": str(current_user.id), "username": current_user.username, "role": current_user.role}
         )
-
+        
         return {
             "access_token": new_token,
             "token_type": "bearer",
@@ -324,7 +311,6 @@ async def refresh_token(current_user=Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Token refresh error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/auth/change-password")
 async def change_password(
@@ -335,27 +321,25 @@ async def change_password(
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         # Verify old password
         if not verify_password(password_data.old_password, current_user.password_hash):
-            raise HTTPException(
-                status_code=401, detail="Incorrect current password")
-
+            raise HTTPException(status_code=401, detail="Incorrect current password")
+        
         # Update password
         db = SessionLocal()
         user = db.query(User).filter(User.id == current_user.id).first()
         user.password_hash = get_password_hash(password_data.new_password)
         db.commit()
         db.close()
-
+        
         return {"status": "success", "message": "Password changed successfully"}
-
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Password change error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/auth/me")
 async def get_me(current_user=Depends(get_current_user)):
@@ -373,7 +357,6 @@ async def get_me(current_user=Depends(get_current_user)):
 
 # ==================== Admin User Management ====================
 
-
 @app.get("/admin/users")
 async def list_users(
     skip: int = Query(0, ge=0),
@@ -384,12 +367,12 @@ async def list_users(
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         db = SessionLocal()
         users = db.query(User).offset(skip).limit(limit).all()
         total = db.query(User).count()
         db.close()
-
+        
         return {
             "total": total,
             "users": [
@@ -406,11 +389,10 @@ async def list_users(
                 for u in users
             ]
         }
-
+        
     except Exception as e:
         logger.error(f"List users error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.put("/admin/users/{user_id}/role")
 async def update_user_role(
@@ -422,29 +404,28 @@ async def update_user_role(
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         if role not in ["admin", "user"]:
             raise HTTPException(status_code=400, detail="Invalid role")
-
+        
         db = SessionLocal()
         user = db.query(User).filter(User.id == user_id).first()
-
+        
         if not user:
             db.close()
             raise HTTPException(status_code=404, detail="User not found")
-
+        
         user.role = role
         db.commit()
         db.close()
-
+        
         return {"status": "success", "message": f"User role updated to {role}"}
-
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Update role error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.put("/admin/users/{user_id}/toggle-status")
 async def toggle_user_status(
@@ -455,31 +436,29 @@ async def toggle_user_status(
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         if user_id == admin_user.id:
-            raise HTTPException(
-                status_code=400, detail="Cannot modify your own status")
-
+            raise HTTPException(status_code=400, detail="Cannot modify your own status")
+        
         db = SessionLocal()
         user = db.query(User).filter(User.id == user_id).first()
-
+        
         if not user:
             db.close()
             raise HTTPException(status_code=404, detail="User not found")
-
+        
         user.is_active = not user.is_active
         db.commit()
         db.close()
-
+        
         status_text = "enabled" if user.is_active else "disabled"
         return {"status": "success", "message": f"User account {status_text}"}
-
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Toggle user status error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.delete("/admin/users/{user_id}")
 async def delete_user(
@@ -490,24 +469,23 @@ async def delete_user(
     try:
         from database import SessionLocal
         from models_db import User
-
+        
         if user_id == admin_user.id:
-            raise HTTPException(
-                status_code=400, detail="Cannot delete yourself")
-
+            raise HTTPException(status_code=400, detail="Cannot delete yourself")
+        
         db = SessionLocal()
         user = db.query(User).filter(User.id == user_id).first()
-
+        
         if not user:
             db.close()
             raise HTTPException(status_code=404, detail="User not found")
-
+        
         db.delete(user)
         db.commit()
         db.close()
-
+        
         return {"status": "success", "message": f"User deleted successfully"}
-
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -515,7 +493,6 @@ async def delete_user(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Message Endpoints (Protected) ====================
-
 
 @app.get("/messages")
 async def get_all_messages(
@@ -530,31 +507,31 @@ async def get_all_messages(
         from database import SessionLocal
         from models_db import SMSDB
         from sqlalchemy import desc
-
+        
         db = SessionLocal()
-
+        
         # Build query
         query = db.query(SMSDB)
-
+        
         if unread_only:
             query = query.filter(SMSDB.is_read == False)
-
+        
         if sender:
             query = query.filter(SMSDB.number == sender)
-
+        
         # Order by created_at descending (newest first)
         query = query.order_by(desc(SMSDB.created_at))
-
+        
         # Get total count
         total = query.count()
-
+        
         # Apply pagination
         if limit:
             query = query.limit(limit).offset(offset)
-
+        
         messages = query.all()
         db.close()
-
+        
         return {
             "total": total,
             "count": len(messages),
@@ -562,13 +539,11 @@ async def get_all_messages(
             "page": (offset // limit) + 1 if limit else 1,
             "limit": limit
         }
-
+        
     except Exception as e:
         logger.error(f"Error in get_all_messages: {e}")
         logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
 
 @app.get("/messages/new")
 async def get_new_messages(
@@ -580,25 +555,24 @@ async def get_new_messages(
         from database import SessionLocal
         from models_db import SMSDB
         from sqlalchemy import desc
-
+        
         db = SessionLocal()
         messages = db.query(SMSDB).filter(
             SMSDB.is_read == False
         ).order_by(desc(SMSDB.created_at)).limit(limit).all()
-
+        
         total_unread = db.query(SMSDB).filter(SMSDB.is_read == False).count()
         db.close()
-
+        
         return {
             "total_unread": total_unread,
             "count": len(messages),
             "messages": [convert_to_serializable(msg) for msg in messages]
         }
-
+        
     except Exception as e:
         logger.error(f"Error in get_new_messages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/messages/{file_id}/read")
 async def mark_message_as_read(
@@ -609,14 +583,14 @@ async def mark_message_as_read(
     try:
         from database import SessionLocal
         from models_db import SMSDB
-
+        
         db = SessionLocal()
         result = db.query(SMSDB).filter(SMSDB.file_id == file_id).update(
             {"is_read": True, "read_at": datetime.now()}
         )
         db.commit()
         db.close()
-
+        
         if result > 0:
             return {
                 "status": "success",
@@ -624,9 +598,8 @@ async def mark_message_as_read(
                 "file_id": file_id
             }
         else:
-            raise HTTPException(
-                status_code=404, detail=f"Message with file_id '{file_id}' not found")
-
+            raise HTTPException(status_code=404, detail=f"Message with file_id '{file_id}' not found")
+            
     except HTTPException:
         raise
     except Exception as e:
@@ -634,7 +607,6 @@ async def mark_message_as_read(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== SMS Sending Endpoints ====================
-
 
 @app.post("/messages/send")
 async def send_sms(
@@ -644,15 +616,14 @@ async def send_sms(
     """Send a single SMS message"""
     try:
         import uuid
-
+        
         message_id = str(uuid.uuid4())
-
+        
         from database import SessionLocal
         from models_db import SendLog
-
+        
         db = SessionLocal()
-
-        # Log the send attempt
+        
         send_log = SendLog(
             message_id=message_id,
             to_number=message_data.to_number,
@@ -662,11 +633,11 @@ async def send_sms(
             sent_by_user_id=current_user.id,
             sent_at=datetime.now()
         )
-
+        
         db.add(send_log)
         db.commit()
         db.close()
-
+        
         return {
             "status": "success",
             "message_id": message_id,
@@ -674,12 +645,10 @@ async def send_sms(
             "sent_by": current_user.username,
             "timestamp": datetime.now().isoformat()
         }
-
+        
     except Exception as e:
         logger.error(f"Send SMS error: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to send message: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
 
 @app.post("/messages/send/batch")
 async def send_batch_sms(
@@ -690,15 +659,15 @@ async def send_batch_sms(
     try:
         results = []
         failed = []
-
+        
         for msg in batch_data.messages:
             try:
                 import uuid
                 message_id = str(uuid.uuid4())
-
+                
                 from database import SessionLocal
                 from models_db import SendLog
-
+                
                 db = SessionLocal()
                 send_log = SendLog(
                     message_id=message_id,
@@ -712,7 +681,7 @@ async def send_batch_sms(
                 db.add(send_log)
                 db.commit()
                 db.close()
-
+                
                 results.append({
                     "to_number": msg.to_number,
                     "status": "success",
@@ -724,7 +693,7 @@ async def send_batch_sms(
                     "status": "failed",
                     "error": str(e)
                 })
-
+        
         return {
             "status": "completed",
             "total": len(batch_data.messages),
@@ -733,11 +702,10 @@ async def send_batch_sms(
             "results": results,
             "failures": failed
         }
-
+        
     except Exception as e:
         logger.error(f"Batch send error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/messages/sent")
 async def get_sent_messages(
@@ -750,22 +718,19 @@ async def get_sent_messages(
         from database import SessionLocal
         from models_db import SendLog
         from sqlalchemy import desc
-
+        
         db = SessionLocal()
-
-        # Admin sees all, user sees only their own
+        
         if current_user.role == "admin":
             query = db.query(SendLog)
         else:
-            query = db.query(SendLog).filter(
-                SendLog.sent_by_user_id == current_user.id)
-
+            query = db.query(SendLog).filter(SendLog.sent_by_user_id == current_user.id)
+        
         total = query.count()
-        messages = query.order_by(desc(SendLog.sent_at)).limit(
-            limit).offset(offset).all()
-
+        messages = query.order_by(desc(SendLog.sent_at)).limit(limit).offset(offset).all()
+        
         db.close()
-
+        
         return {
             "total": total,
             "count": len(messages),
@@ -784,46 +749,42 @@ async def get_sent_messages(
                 for m in messages
             ]
         }
-
+        
     except Exception as e:
         logger.error(f"Get sent messages error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Delete Endpoints (Admin Only) ====================
 
-
 @app.delete("/messages/old")
 async def delete_old_messages_endpoint(
-    days: int = Query(...,
-                      description="Delete messages older than X days", ge=1, le=365),
+    days: int = Query(..., description="Delete messages older than X days", ge=1, le=365),
     admin_user=Depends(get_current_admin_user)
 ):
     """Delete messages older than specified days (admin only)"""
     try:
         from database import SessionLocal
         from models_db import SMSDB
-
-        logger.info(
-            f"Admin {admin_user.username} deleting messages older than {days} days")
-
+        
+        logger.info(f"Admin {admin_user.username} deleting messages older than {days} days")
+        
         db = SessionLocal()
         cutoff_date = datetime.now() - timedelta(days=days)
         cutoff_date_str = cutoff_date.strftime("%d/%m/%y")
-
-        # Delete messages
+        
         deleted_by_created = db.query(SMSDB).filter(
             SMSDB.created_at < cutoff_date
         ).delete(synchronize_session=False)
-
+        
         deleted_by_date = db.query(SMSDB).filter(
             SMSDB.date < cutoff_date_str
         ).delete(synchronize_session=False)
-
+        
         db.commit()
         total_deleted = deleted_by_created + deleted_by_date
         remaining_count = db.query(SMSDB).count()
         db.close()
-
+        
         return {
             "status": "success",
             "deleted_count": total_deleted,
@@ -833,42 +794,39 @@ async def delete_old_messages_endpoint(
             "deleted_by_admin": admin_user.username,
             "message": f"Successfully deleted {total_deleted} messages older than {days} days"
         }
-
+        
     except Exception as e:
         logger.error(f"Error deleting old messages: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to delete messages: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Failed to delete messages: {str(e)}")
 
 @app.get("/messages/old/preview")
 async def preview_old_messages(
-    days: int = Query(
-        30, description="Preview messages older than X days", ge=1, le=365),
+    days: int = Query(30, description="Preview messages older than X days", ge=1, le=365),
     admin_user=Depends(get_current_admin_user)
 ):
     """Preview messages that would be deleted (admin only)"""
     try:
         from database import SessionLocal
         from models_db import SMSDB
-
+        
         db = SessionLocal()
         cutoff_date = datetime.now() - timedelta(days=days)
         cutoff_date_str = cutoff_date.strftime("%d/%m/%y")
-
+        
         old_by_created = db.query(SMSDB).filter(
             SMSDB.created_at < cutoff_date
         ).all()
-
+        
         old_by_date = db.query(SMSDB).filter(
             SMSDB.date < cutoff_date_str
         ).all()
-
+        
         messages_to_delete = {}
         for msg in old_by_created:
             messages_to_delete[msg.id] = msg
         for msg in old_by_date:
             messages_to_delete[msg.id] = msg
-
+        
         preview = []
         for msg in list(messages_to_delete.values())[:20]:
             preview.append({
@@ -881,9 +839,9 @@ async def preview_old_messages(
                 'is_read': msg.is_read,
                 'created_at': msg.created_at.isoformat() if msg.created_at else None
             })
-
+        
         db.close()
-
+        
         return {
             "status": "success",
             "would_delete_count": len(messages_to_delete),
@@ -892,13 +850,12 @@ async def preview_old_messages(
             "preview": preview,
             "note": f"Showing first 20 of {len(messages_to_delete)} messages"
         }
-
+        
     except Exception as e:
         logger.error(f"Error previewing old messages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Statistics Endpoint ====================
-
 
 @app.get("/stats")
 async def get_statistics(current_user=Depends(get_current_active_user)):
@@ -907,23 +864,21 @@ async def get_statistics(current_user=Depends(get_current_active_user)):
         from database import SessionLocal
         from models_db import SMSDB, User
         from sqlalchemy import func
-
+        
         db = SessionLocal()
-
+        
         total = db.query(func.count(SMSDB.id)).scalar() or 0
-        unread = db.query(func.count(SMSDB.id)).filter(
-            SMSDB.is_read == False).scalar() or 0
+        unread = db.query(func.count(SMSDB.id)).filter(SMSDB.is_read == False).scalar() or 0
         read = total - unread
-        unique_senders = db.query(func.count(
-            func.distinct(SMSDB.number))).scalar() or 0
-
+        unique_senders = db.query(func.count(func.distinct(SMSDB.number))).scalar() or 0
+        
         seven_days_ago = datetime.now() - timedelta(days=7)
         last_7_days = db.query(func.count(SMSDB.id)).filter(
             SMSDB.created_at >= seven_days_ago
         ).scalar() or 0
-
+        
         read_rate = (read / total * 100) if total > 0 else 0
-
+        
         stats = {
             "total_messages": total,
             "unread_messages": unread,
@@ -934,24 +889,21 @@ async def get_statistics(current_user=Depends(get_current_active_user)):
             "user_role": current_user.role,
             "timestamp": datetime.now().isoformat()
         }
-
-        # Add admin-only stats
+        
         if current_user.role == "admin":
             total_users = db.query(func.count(User.id)).scalar() or 0
-            active_users = db.query(func.count(User.id)).filter(
-                User.is_active == True).scalar() or 0
+            active_users = db.query(func.count(User.id)).filter(User.is_active == True).scalar() or 0
             stats["total_users"] = total_users
             stats["active_users"] = active_users
-
+        
         db.close()
         return stats
-
+        
     except Exception as e:
         logger.error(f"Error in get_statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Public Endpoints (No Auth Required) ====================
-
 
 @app.get("/")
 def root():
@@ -971,17 +923,15 @@ def root():
         "timestamp": datetime.now().isoformat()
     }
 
-
 @app.get("/health")
 def health_check():
     """Health check endpoint (public)"""
     try:
         from database import SessionLocal
         db = SessionLocal()
-        # ✅ FIXED: Added text() wrapper for SQLAlchemy 2.0+
         db.execute(text("SELECT 1"))
         db.close()
-
+        
         return {
             "status": "healthy",
             "database": "connected",
@@ -997,7 +947,6 @@ def health_check():
         }
 
 # ==================== Helper Functions ====================
-
 
 def convert_to_serializable(msg):
     """Convert database message to serializable dict"""
@@ -1016,21 +965,18 @@ def convert_to_serializable(msg):
 
 # ==================== Database Setup ====================
 
-
 def setup_database():
     """Initialize database tables and create default admin user"""
     try:
         from database import engine
         from models_db import Base, User, SMSDB, SendLog
-
-        # Create all tables
+        
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created successfully")
-
-        # Create default admin user if none exists
+        
         from database import SessionLocal
         db = SessionLocal()
-
+        
         admin_exists = db.query(User).filter(User.role == "admin").first()
         if not admin_exists:
             default_admin = User(
@@ -1044,15 +990,13 @@ def setup_database():
             )
             db.add(default_admin)
             db.commit()
-            logger.info(
-                "Default admin user created (username: admin, password: admin123)")
-
+            logger.info("Default admin user created (username: admin, password: admin123)")
+        
         db.close()
     except Exception as e:
         logger.error(f"Database setup error: {e}")
 
 # ==================== Startup Event ====================
-
 
 def start_watcher_safe():
     """Safe watcher starter"""
@@ -1063,13 +1007,12 @@ def start_watcher_safe():
     except Exception as e:
         logger.error(f"Watcher error: {e}")
 
-
 @app.on_event("startup")
 def startup_event():
     """Start the SMS watcher on startup and setup database"""
     try:
         setup_database()
-
+        
         thread = threading.Thread(target=start_watcher_safe, daemon=True)
         thread.start()
         logger.info("SMS Watcher thread started successfully")
@@ -1077,7 +1020,6 @@ def startup_event():
         logger.error(f"Failed to start watcher: {e}")
 
 # ==================== Main Entry Point ====================
-
 
 if __name__ == "__main__":
     import uvicorn
