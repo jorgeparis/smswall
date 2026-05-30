@@ -1,4 +1,5 @@
 import { useState } from "react";
+import toast from "react-hot-toast";
 import { MessageCircle, Lock, User, Eye, EyeOff } from "lucide-react";
 
 export default function Login({ onLogin }) {

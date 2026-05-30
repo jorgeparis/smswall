@@ -1,5 +1,8 @@
+import { Send, Shield } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
+import AdminPanel from "./components/AdminPanel";
+import ContactList from "./components/ContactList";
 import Header from "./components/Header";
 import Login from "./components/Login";
 import MessageList from "./components/MessageList";
@@ -7,32 +10,20 @@ import Stats from "./components/Stats";
 
 const API_BASE = "http://localhost:8000";
 
-// Helper functions using sessionStorage instead of localStorage
-const getAuthToken = () => {
-  return sessionStorage.getItem("access_token");
-};
-
-const setAuthToken = (token) => {
-  if (token) {
-    sessionStorage.setItem("access_token", token);
-  } else {
-    sessionStorage.removeItem("access_token");
-  }
-};
-
+// Helper functions
+const getAuthToken = () => sessionStorage.getItem("access_token");
+const setAuthToken = (token) =>
+  token
+    ? sessionStorage.setItem("access_token", token)
+    : sessionStorage.removeItem("access_token");
 const getUser = () => {
   const userStr = sessionStorage.getItem("user");
   return userStr ? JSON.parse(userStr) : null;
 };
-
-const setUser = (user) => {
-  if (user) {
-    sessionStorage.setItem("user", JSON.stringify(user));
-  } else {
-    sessionStorage.removeItem("user");
-  }
-};
-
+const setUser = (user) =>
+  user
+    ? sessionStorage.setItem("user", JSON.stringify(user))
+    : sessionStorage.removeItem("user");
 const clearAuth = () => {
   sessionStorage.removeItem("access_token");
   sessionStorage.removeItem("user");
@@ -41,10 +32,7 @@ const clearAuth = () => {
 // Fetch wrapper with authentication
 const fetchWithAuth = async (url, options = {}) => {
   const token = getAuthToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
+  if (!token) throw new Error("No authentication token found");
 
   const headers = {
     "Content-Type": "application/json",
@@ -53,25 +41,31 @@ const fetchWithAuth = async (url, options = {}) => {
   };
 
   const response = await fetch(url, { ...options, headers });
-
-  // If unauthorized, clear token and redirect to login
   if (response.status === 401) {
     clearAuth();
-    // Don't redirect immediately, let the caller handle it
     throw new Error("Session expired. Please login again.");
   }
-
   return response;
 };
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [newMessages, setNewMessages] = useState([]);
+  const [sentMessages, setSentMessages] = useState([]);
   const [activeTab, setActiveTab] = useState("all");
+  const [activeView, setActiveView] = useState("messages");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState({
+    totalMessages: 0,
+    unreadMessages: 0,
+    readRate: 0,
+    uniqueSenders: 0,
+    messagesLast7Days: 0
+  });
 
   // Normalize message data
   const normalizeMessages = (data) => {
@@ -108,7 +102,7 @@ function App() {
     return [];
   };
 
-  // Check authentication status on mount (runs every time the page loads)
+  // Check authentication on mount
   useEffect(() => {
     const token = getAuthToken();
     const storedUser = getUser();
@@ -116,122 +110,148 @@ function App() {
     if (token && storedUser) {
       setIsLoggedIn(true);
       setUser(storedUser);
-      // Load messages after confirming auth
       loadInitialData();
     } else {
-      // No session, ensure logged out state
       setIsLoggedIn(false);
       setUser(null);
       setLoading(false);
     }
   }, []);
 
-  const loadInitialData = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([fetchAll(), fetchNew()]);
-    } catch (error) {
-      console.error("Error loading initial data:", error);
-      if (error.message === "Session expired. Please login again.") {
-        clearAuth();
-        setIsLoggedIn(false);
-        setUser(null);
-        window.location.href = "/login";
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Fetch all messages
-  const fetchAll = useCallback(async () => {
+  // Fetch ALL messages
+  const fetchAllMessages = useCallback(async () => {
     if (!isLoggedIn) return [];
-
+    console.log("Fetching ALL messages...");
     try {
-      const res = await fetchWithAuth(`${API_BASE}/messages?limit=500`);
-      if (!res.ok) throw new Error("Failed to fetch messages");
+      const res = await fetchWithAuth(`${API_BASE}/messages/all`);
       const data = await res.json();
-      const normalized = normalizeMessages(data);
+
+      let messagesArray = [];
+      let total = 0;
+
+      if (data.messages && Array.isArray(data.messages)) {
+        messagesArray = data.messages;
+        total = data.total || messagesArray.length;
+      } else if (Array.isArray(data)) {
+        messagesArray = data;
+        total = messagesArray.length;
+      }
+
+      const normalized = normalizeMessages(messagesArray);
       setMessages(normalized);
+      setTotalCount(total);
       setError(null);
       return normalized;
     } catch (err) {
-      if (
-        err.message !== "No authentication token found" &&
-        err.message !== "Session expired. Please login again."
-      ) {
-        setError("Failed to load messages");
-        toast.error("Connection error - Could not fetch messages");
-      } else if (err.message === "Session expired. Please login again.") {
-        clearAuth();
-        setIsLoggedIn(false);
-        setUser(null);
-        toast.error("Session expired. Please login again.");
+      console.error("Fetch all error:", err);
+      try {
+        const res = await fetchWithAuth(`${API_BASE}/messages?limit=10000`);
+        const data = await res.json();
+        let messagesArray = data.messages || [];
+        const normalized = normalizeMessages(messagesArray);
+        setMessages(normalized);
+        setTotalCount(data.total || normalized.length);
+        return normalized;
+      } catch (fallbackErr) {
+        if (!err.message.includes("Session expired")) {
+          setError("Failed to load messages");
+          toast.error("Connection error - Could not fetch messages");
+        }
+        return [];
       }
-      return [];
     }
   }, [isLoggedIn]);
 
-  // Fetch new messages
+  // Fetch new/unread messages
   const fetchNew = useCallback(async () => {
     if (!isLoggedIn) return [];
-
     try {
-      const res = await fetchWithAuth(`${API_BASE}/messages/new?limit=100`);
-      if (!res.ok) throw new Error("Failed to fetch new messages");
+      const res = await fetchWithAuth(`${API_BASE}/messages/new?limit=1000`);
       const data = await res.json();
-      const normalized = normalizeMessages(data);
+      let messagesArray = data.messages || [];
+      const normalized = normalizeMessages(messagesArray);
       setNewMessages(normalized);
       return normalized;
     } catch (err) {
-      console.error("Error fetching new messages:", err);
-      if (err.message === "Session expired. Please login again.") {
-        clearAuth();
-        setIsLoggedIn(false);
-        setUser(null);
-      }
+      console.error("Fetch new error:", err);
       return [];
     }
   }, [isLoggedIn]);
 
-  // Mark message as read
+  // Fetch sent messages
+  const fetchSentMessages = useCallback(async () => {
+    if (!isLoggedIn || user?.role !== "admin") return [];
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/messages/sent?limit=500`);
+      const data = await res.json();
+      setSentMessages(data.messages || []);
+      return data.messages || [];
+    } catch (err) {
+      console.error("Error fetching sent messages:", err);
+      return [];
+    }
+  }, [isLoggedIn, user?.role]);
+
+  // Fetch statistics
+  const fetchStats = useCallback(async () => {
+    if (!isLoggedIn) return;
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/stats`);
+      const data = await res.json();
+      setStats({
+        totalMessages: data.total_messages || 0,
+        unreadMessages: data.unread_messages || 0,
+        readRate: data.read_rate || 0,
+        uniqueSenders: data.unique_senders || 0,
+        messagesLast7Days: data.messages_last_7_days || 0
+      });
+      setTotalCount(data.total_messages || 0);
+    } catch (err) {
+      console.error("Error fetching stats:", err);
+    }
+  }, [isLoggedIn]);
+
+  // Refresh all data (used after any change)
+  const refreshAllData = useCallback(async () => {
+    await Promise.all([fetchAllMessages(), fetchNew(), fetchStats()]);
+  }, [fetchAllMessages, fetchNew, fetchStats]);
+
+  // Mark message as read - FIXED: updates both lists immediately
   const markAsRead = useCallback(
     async (fileId) => {
       if (!isLoggedIn) return;
-
       try {
         const res = await fetchWithAuth(`${API_BASE}/messages/${fileId}/read`, {
           method: "POST"
         });
-
         if (!res.ok) throw new Error("Failed to mark as read");
 
+        // Update all messages - mark as read
         setMessages((prev) =>
           prev.map((msg) =>
             msg.file_id === fileId ? { ...msg, is_read: true } : msg
           )
         );
+        // Remove from new messages
         setNewMessages((prev) => prev.filter((msg) => msg.file_id !== fileId));
 
         toast.success("Message marked as read");
+        fetchStats();
       } catch (err) {
         toast.error("Failed to mark message as read");
-        console.error(err);
       }
     },
-    [isLoggedIn]
+    [isLoggedIn, fetchStats]
   );
 
-  // Delete single message
+  // Delete single message - FIXED: removes from all lists
   const deleteMessage = useCallback(
     async (messageId) => {
       if (!isLoggedIn) return false;
-
       try {
         const res = await fetchWithAuth(`${API_BASE}/messages/${messageId}`, {
           method: "DELETE"
         });
-
         if (!res.ok) throw new Error("Failed to delete message");
 
         setMessages((prev) =>
@@ -246,14 +266,14 @@ function App() {
         );
 
         toast.success("Message deleted successfully");
+        fetchStats();
         return true;
       } catch (err) {
         toast.error("Failed to delete message");
-        console.error(err);
         return false;
       }
     },
-    [isLoggedIn]
+    [isLoggedIn, fetchStats]
   );
 
   // Reply to message
@@ -262,50 +282,28 @@ function App() {
     console.log("Reply to message:", message);
   }, []);
 
-  // Delete old messages (fixed)
+  // Delete old messages - refreshes all data
   const deleteOld = useCallback(
     async (days = 30) => {
       if (!isLoggedIn) return false;
-
       try {
         const res = await fetchWithAuth(
           `${API_BASE}/messages/old?days=${days}`,
-          {
-            method: "DELETE"
-          }
+          { method: "DELETE" }
         );
-
-        if (!res.ok) {
-          const errorData = await res.json().catch(() => ({}));
-          throw new Error(errorData.detail || "Delete failed");
-        }
-
+        if (!res.ok) throw new Error("Delete failed");
         const result = await res.json();
-
         toast.success(
           `Successfully deleted ${result.deleted_count || 0} old messages`
         );
-
-        // Refresh the message lists
-        await fetchAll();
-        await fetchNew();
-
+        await refreshAllData();
         return true;
       } catch (err) {
-        console.error("Delete old messages error:", err);
-
-        if (err.message === "Session expired. Please login again.") {
-          clearAuth();
-          setIsLoggedIn(false);
-          setUser(null);
-          toast.error("Session expired. Please login again.");
-        } else {
-          toast.error(err.message || "Failed to delete old messages");
-        }
+        toast.error(err.message || "Failed to delete old messages");
         return false;
       }
     },
-    [fetchAll, fetchNew, isLoggedIn]
+    [refreshAllData, isLoggedIn]
   );
 
   // Login function
@@ -321,20 +319,12 @@ function App() {
         const error = await response.json();
         throw new Error(error.detail || "Login failed");
       }
-
       const data = await response.json();
-
-      // Store token and user info in sessionStorage (clears on tab close)
       setAuthToken(data.access_token);
       setUser(data.user);
-
       setIsLoggedIn(true);
-      setUser(data.user);
       toast.success(`Welcome back, ${data.user.username}!`);
-
-      // Load messages after login
       await loadInitialData();
-
       return true;
     } catch (err) {
       toast.error(err.message);
@@ -342,126 +332,251 @@ function App() {
     }
   };
 
-  // Logout function
+  // Load initial data
+  const loadInitialData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchAllMessages(),
+        fetchNew(),
+        fetchStats(),
+        fetchSentMessages()
+      ]);
+    } catch (error) {
+      console.error("Error loading initial data:", error);
+      if (error.message === "Session expired. Please login again.") {
+        clearAuth();
+        setIsLoggedIn(false);
+        setUser(null);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Logout
   const handleLogout = () => {
     clearAuth();
     setIsLoggedIn(false);
     setUser(null);
     setMessages([]);
     setNewMessages([]);
+    setSentMessages([]);
     setError(null);
+    setActiveView("messages");
     toast.success("Logged out successfully");
   };
 
-  // Auto refresh
+  // Auto refresh - now refreshes all messages every 10 seconds
   useEffect(() => {
-    if (!isLoggedIn) return;
-
+    if (!isLoggedIn || activeView !== "messages") return;
     const interval = setInterval(() => {
-      if (isLoggedIn) {
-        fetchAll().catch(console.error);
-        fetchNew().catch(console.error);
+      if (isLoggedIn && activeView === "messages") {
+        refreshAllData();
       }
-    }, 5000);
-
+    }, 10000); // Refresh every 10 seconds
     return () => clearInterval(interval);
-  }, [fetchAll, fetchNew, isLoggedIn]);
+  }, [refreshAllData, isLoggedIn, activeView]);
 
-  // If not logged in, show login screen
   if (!isLoggedIn) {
     return <Login onLogin={handleLogin} />;
   }
 
-  const displayedMessages = activeTab === "all" ? messages : newMessages;
-  const totalMessages = messages.length;
-  const unreadCount = newMessages.length;
-  const readRate =
-    totalMessages > 0
-      ? ((totalMessages - unreadCount) / totalMessages) * 100
-      : 0;
+  if (loading && messages.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-gray-700 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Loading messages...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const displayedMessages =
+    activeTab === "all"
+      ? messages
+      : activeTab === "new"
+      ? newMessages
+      : sentMessages;
+
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       <Header
         newCount={newMessages.length}
         onRefresh={() => {
-          fetchAll();
-          fetchNew();
+          refreshAllData();
           toast.success("Refreshing messages...");
         }}
         user={user}
         onLogout={handleLogout}
+        onNavigateToAdmin={() => setActiveView("admin")}
+        onNavigateToMessages={() => setActiveView("messages")}
+        onNavigateToContacts={() => setActiveView("contacts")}
+        activeView={activeView}
+        isAdmin={isAdmin}
       />
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        <Stats
-          totalMessages={totalMessages}
-          unreadCount={unreadCount}
-          onDeleteOld={deleteOld}
-          readRate={readRate}
-          weeklyTrend={5}
-          userRole={user?.role}
-        />
+        {activeView === "messages" ? (
+          <>
+            <Stats
+              totalMessages={stats.totalMessages || totalCount}
+              unreadCount={stats.unreadMessages || newMessages.length}
+              onDeleteOld={deleteOld}
+              readRate={stats.readRate}
+              weeklyTrend={5}
+              userRole={user?.role}
+            />
 
-        {/* Modern Tabs */}
-        <div className="flex border-b border-gray-800 mb-8 gap-2">
-          <button
-            onClick={() => setActiveTab("all")}
-            className={`px-8 py-4 font-medium text-lg transition-all relative ${
-              activeTab === "all"
-                ? "text-white border-b-2 border-cyan-400"
-                : "text-gray-400 hover:text-gray-300"
-            }`}
-          >
-            All Messages
-            <span className="ml-2 text-sm text-gray-500">
-              ({messages.length})
-            </span>
-          </button>
+            {/* Tabs */}
+            <div className="flex border-b border-gray-800 mb-8 gap-2">
+              <button
+                onClick={() => {
+                  setActiveTab("all");
+                  // Refresh when switching to all tab
+                  if (activeTab !== "all") fetchAllMessages();
+                }}
+                className={`px-6 py-3 font-medium transition-all relative ${
+                  activeTab === "all"
+                    ? "text-white border-b-2 border-cyan-400"
+                    : "text-gray-400 hover:text-gray-300"
+                }`}
+              >
+                All Messages
+                <span className="ml-2 text-xs text-gray-500">
+                  ({totalCount.toLocaleString()})
+                </span>
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab("new");
+                  if (activeTab !== "new") fetchNew();
+                }}
+                className={`px-6 py-3 font-medium transition-all relative flex items-center gap-2 ${
+                  activeTab === "new"
+                    ? "text-white border-b-2 border-cyan-400"
+                    : "text-gray-400 hover:text-gray-300"
+                }`}
+              >
+                Unread
+                {newMessages.length > 0 && (
+                  <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                    {newMessages.length}
+                  </span>
+                )}
+              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setActiveTab("sent")}
+                  className={`px-6 py-3 font-medium transition-all relative ${
+                    activeTab === "sent"
+                      ? "text-white border-b-2 border-cyan-400"
+                      : "text-gray-400 hover:text-gray-300"
+                  }`}
+                >
+                  Sent
+                  <span className="ml-2 text-xs text-gray-500">
+                    ({sentMessages.length})
+                  </span>
+                </button>
+              )}
+            </div>
 
-          <button
-            onClick={() => setActiveTab("new")}
-            className={`px-8 py-4 font-medium text-lg transition-all relative flex items-center gap-3 ${
-              activeTab === "new"
-                ? "text-white border-b-2 border-cyan-400"
-                : "text-gray-400 hover:text-gray-300"
-            }`}
-          >
-            Live Inbox
-            {newMessages.length > 0 && (
-              <span className="bg-emerald-500 text-white text-xs font-bold px-3 py-1 rounded-full animate-pulse">
-                {newMessages.length} NEW
-              </span>
+            {/* Message List */}
+            {activeTab === "sent" && isAdmin ? (
+              <div className="space-y-3">
+                {sentMessages.length === 0 ? (
+                  <div className="text-center py-16 bg-gray-900/30 rounded-2xl border border-gray-800">
+                    <Send className="mx-auto text-gray-600 mb-4" size={48} />
+                    <p className="text-gray-400">No sent messages yet</p>
+                  </div>
+                ) : (
+                  sentMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className="bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                            <Send size={14} className="text-blue-400" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-white">
+                              To: {msg.to_number}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {new Date(msg.sent_at).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                        <span
+                          className={`text-xs px-2 py-1 rounded-full ${
+                            msg.status === "sent"
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : "bg-amber-500/20 text-amber-400"
+                          }`}
+                        >
+                          {msg.status}
+                        </span>
+                      </div>
+                      <p className="text-gray-300 text-sm ml-11">
+                        {msg.message}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <MessageList
+                messages={displayedMessages}
+                loading={loading}
+                refresh={() => refreshAllData()}
+                onReply={replyToMessage}
+                onDelete={deleteMessage}
+                onMarkAsRead={markAsRead}
+              />
             )}
-          </button>
-        </div>
 
-        {/* Message List */}
-        <MessageList
-          messages={displayedMessages}
-          loading={loading}
-          refresh={() => {
-            fetchAll();
-            fetchNew();
-          }}
-          onReply={replyToMessage}
-          onDelete={deleteMessage}
-          onMarkAsRead={markAsRead}
-        />
+            {displayedMessages.length === 0 &&
+              !loading &&
+              activeTab !== "sent" && (
+                <div className="text-center py-16 bg-gray-900/30 rounded-2xl border border-gray-800">
+                  <div className="w-20 h-20 bg-gray-800 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <Shield className="text-gray-600" size={32} />
+                  </div>
+                  <p className="text-gray-400">No messages found</p>
+                  <p className="text-gray-500 text-sm mt-1">
+                    New SMS will appear here
+                  </p>
+                </div>
+              )}
 
-        {error && (
-          <div className="text-center py-10 text-red-400 bg-red-500/10 rounded-xl mt-4">
-            ⚠️ {error}
-            <button
-              onClick={() => {
-                fetchAll();
-                fetchNew();
-              }}
-              className="ml-4 px-3 py-1 bg-red-500/20 rounded-lg hover:bg-red-500/30 transition"
-            >
-              Retry
-            </button>
-          </div>
+            {error && (
+              <div className="text-center py-10 text-red-400 bg-red-500/10 rounded-xl mt-4">
+                ⚠️ {error}
+                <button
+                  onClick={() => refreshAllData()}
+                  className="ml-4 px-3 py-1 bg-red-500/20 rounded-lg hover:bg-red-500/30 transition"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </>
+        ) : activeView === "contacts" ? (
+          isAdmin ? (
+            <ContactList />
+          ) : (
+            <AccessDenied onBack={() => setActiveView("messages")} />
+          )
+        ) : isAdmin ? (
+          <AdminPanel />
+        ) : (
+          <AccessDenied onBack={() => setActiveView("messages")} />
         )}
       </div>
 
@@ -492,5 +607,22 @@ function App() {
     </div>
   );
 }
+
+// Access Denied Component
+const AccessDenied = ({ onBack }) => (
+  <div className="text-center py-20">
+    <Shield className="mx-auto text-gray-600 mb-4" size={48} />
+    <h2 className="text-xl font-semibold text-white mb-2">Access Denied</h2>
+    <p className="text-gray-400">
+      You don't have permission to access this section.
+    </p>
+    <button
+      onClick={onBack}
+      className="mt-4 px-4 py-2 bg-blue-600 rounded-lg text-white hover:bg-blue-700 transition"
+    >
+      Back to Messages
+    </button>
+  </div>
+);
 
 export default App;

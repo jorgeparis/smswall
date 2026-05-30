@@ -10,7 +10,14 @@ import {
   Trash2,
   TrendingUp,
   X,
-  Zap
+  Zap,
+  Activity,
+  HardDrive,
+  Mail,
+  MailOpen,
+  Users,
+  BarChart3,
+  ChevronRight
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -21,7 +28,7 @@ export default function Stats({
   readRate = 0,
   weeklyTrend = 0,
   storageUsed = 0,
-  userRole = "user" // Add userRole prop to check if admin
+  userRole = "user"
 }) {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteDays, setDeleteDays] = useState(30);
@@ -31,28 +38,23 @@ export default function Stats({
   const [showConfirmAnimation, setShowConfirmAnimation] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState(null);
   const [showAdminRequiredModal, setShowAdminRequiredModal] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   const presets = [
-    { label: "1 Week", days: 7 },
-    { label: "1 Month", days: 30 },
-    { label: "3 Months", days: 90 },
-    { label: "6 Months", days: 180 },
-    { label: "1 Year", days: 365 }
+    { label: "7d", days: 7, icon: "📅" },
+    { label: "30d", days: 30, icon: "📆" },
+    { label: "90d", days: 90, icon: "📊" },
+    { label: "180d", days: 180, icon: "📈" },
+    { label: "365d", days: 365, icon: "📉" }
   ];
 
-  // Check if user is admin
   const isAdmin = userRole === "admin";
 
-  // Helper function to get auth token
   const getAuthToken = () => {
-    return (
-      sessionStorage.getItem("access_token") ||
-      localStorage.getItem("access_token")
-    );
+    return sessionStorage.getItem("access_token") || localStorage.getItem("access_token");
   };
 
   const handleDeleteOld = async () => {
-    // Double-check admin permission before proceeding
     if (!isAdmin) {
       setShowAdminRequiredModal(true);
       return;
@@ -63,10 +65,7 @@ export default function Stats({
 
     try {
       const token = getAuthToken();
-
-      if (!token) {
-        throw new Error("No authentication token found");
-      }
+      if (!token) throw new Error("No authentication token found");
 
       const response = await fetch(
         `http://localhost:8000/messages/old?days=${deleteDays}`,
@@ -79,10 +78,7 @@ export default function Stats({
         }
       );
 
-      // Handle unauthorized
-      if (response.status === 401) {
-        throw new Error("Session expired. Please login again.");
-      }
+      if (response.status === 401) throw new Error("Session expired. Please login again.");
 
       const result = await response.json();
 
@@ -90,12 +86,8 @@ export default function Stats({
         setDeletedCount(result.deleted_count || 0);
         setShowSuccess(true);
         setShowDeleteModal(false);
-
         setTimeout(() => setShowSuccess(false), 5000);
-
-        if (onDeleteOld) {
-          onDeleteOld(deleteDays); // Pass days to refresh parent
-        }
+        if (onDeleteOld) onDeleteOld(deleteDays);
       } else {
         throw new Error(result.message || "Failed to delete messages");
       }
@@ -103,7 +95,6 @@ export default function Stats({
       console.error(error);
       if (error.message.includes("Session expired")) {
         alert("Session expired. Please login again.");
-        // Clear session and redirect
         sessionStorage.removeItem("access_token");
         sessionStorage.removeItem("user");
         window.location.href = "/login";
@@ -124,222 +115,237 @@ export default function Stats({
   };
 
   const getReadRateColor = () => {
-    if (readRate >= 80) return "text-emerald-400";
-    if (readRate >= 50) return "text-amber-400";
+    const rate = readRate || 0;
+    if (rate >= 80) return "text-emerald-400";
+    if (rate >= 50) return "text-amber-400";
     return "text-red-400";
   };
 
+  const getReadRateBg = () => {
+    const rate = readRate || 0;
+    if (rate >= 80) return "bg-emerald-500/20";
+    if (rate >= 50) return "bg-amber-500/20";
+    return "bg-red-500/20";
+  };
+
   const getTrendIcon = () => {
-    if (weeklyTrend > 0)
-      return <TrendingUp className="text-emerald-400" size={14} />;
-    if (weeklyTrend < 0)
-      return (
-        <TrendingUp className="text-red-400 transform rotate-180" size={14} />
-      );
+    if (weeklyTrend > 0) return <TrendingUp className="text-emerald-400" size={14} />;
+    if (weeklyTrend < 0) return <TrendingUp className="text-red-400 transform rotate-180" size={14} />;
     return null;
   };
 
   useEffect(() => {
     const handleEscape = (e) => {
-      if (e.key === "Escape" && showDeleteModal) {
-        setShowDeleteModal(false);
-      }
+      if (e.key === "Escape" && showDeleteModal) setShowDeleteModal(false);
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [showDeleteModal]);
 
+  // Stat Card Component
+  const StatCard = ({ title, value, icon: Icon, iconBg, valueColor, trend, subtitle }) => (
+    <div className="group relative overflow-hidden bg-gradient-to-br from-gray-900/80 to-gray-950/80 rounded-2xl p-5 border border-gray-800 hover:border-gray-700 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5">
+      <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-current/5 to-transparent rounded-full blur-2xl group-hover:scale-150 transition-transform duration-500 opacity-0 group-hover:opacity-100" />
+      
+      <div className="relative">
+        <div className="flex items-center justify-between mb-4">
+          <div className={`w-10 h-10 ${iconBg} rounded-xl flex items-center justify-center shadow-lg`}>
+            <Icon className="text-white" size={20} />
+          </div>
+          {trend && <div className="flex items-center gap-1 bg-gray-800/50 px-2 py-1 rounded-full">{trend}</div>}
+        </div>
+        
+        <div className="space-y-1">
+          <p className="text-xs text-gray-500 uppercase tracking-wider font-medium">{title}</p>
+          <p className={`text-3xl font-bold ${valueColor || 'text-white'} tabular-nums`}>
+            {typeof value === 'number' ? value.toLocaleString() : value}
+          </p>
+          {subtitle && <p className="text-[10px] text-gray-600">{subtitle}</p>}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Metric Card Component
+  const MetricCard = ({ label, value, icon: Icon, progress, color }) => (
+    <div className="bg-gray-900/30 rounded-xl p-4 border border-gray-800 hover:bg-gray-900/50 transition-all duration-300">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Icon size={14} className={`text-${color}-400`} />
+          <span className="text-xs text-gray-500">{label}</span>
+        </div>
+        <span className={`text-xs font-medium text-${color}-400`}>{value}</span>
+      </div>
+      {progress !== undefined && (
+        <div className="mt-2 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full bg-gradient-to-r from-${color}-500 to-${color}-400 rounded-full transition-all duration-500`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+
+  // Format read rate to 1 decimal place
+  const formattedReadRate = (readRate || 0).toFixed(1);
+
   return (
     <>
-      <div className="bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-800 rounded-3xl p-6 shadow-2xl">
-        {/* Header with Admin Badge */}
-        <div className="flex items-center justify-between mb-8">
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <Database className="text-white" size={20} />
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+              <BarChart3 className="text-white" size={20} />
             </div>
-            <h2 className="text-xl font-bold text-white">Message Analytics</h2>
+            <div>
+              <h2 className="text-lg font-bold text-white">Analytics Overview</h2>
+              <p className="text-xs text-gray-500">Real-time message statistics</p>
+            </div>
             {isAdmin && (
-              <div className="ml-3 px-2 py-1 bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 rounded-lg">
+              <div className="ml-2 px-2 py-1 bg-purple-500/10 border border-purple-500/20 rounded-lg">
                 <div className="flex items-center gap-1">
-                  <Shield size={12} className="text-purple-400" />
-                  <span className="text-xs font-semibold text-purple-300">
-                    Admin Access
-                  </span>
+                  <Shield size={10} className="text-purple-400" />
+                  <span className="text-[10px] font-semibold text-purple-300">Admin</span>
                 </div>
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            <span className="text-xs font-mono text-gray-500 uppercase tracking-wider">
-              Live
-            </span>
+          
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 rounded-full">
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+              <span className="text-[10px] font-mono text-emerald-400/80">Live</span>
+            </div>
+            
+            {storageUsed > 0 && (
+              <button
+                onClick={() => setShowDetails(!showDetails)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/50 rounded-full text-[10px] text-gray-500 hover:text-gray-300 transition"
+              >
+                <HardDrive size={12} />
+                <span>{formatStorage(storageUsed)}</span>
+                <ChevronRight size={10} className={`transition-transform ${showDetails ? 'rotate-90' : ''}`} />
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Main Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          {/* Total Messages */}
-          <div className="group relative overflow-hidden bg-gray-950 rounded-2xl p-6 border border-gray-800 hover:border-gray-600 transition-all duration-300 hover:shadow-xl">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-500/5 to-purple-600/5 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-500" />
-            <div className="relative">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-                  <Clock className="text-white" size={24} />
-                </div>
-                <div className="flex-1">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
-                    Total Messages
-                  </div>
-                  <div className="text-4xl font-bold text-white mt-1 tabular-nums">
-                    {totalMessages.toLocaleString()}
-                  </div>
-                </div>
-              </div>
-              <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-500"
-                  style={{
-                    width: `${Math.min((totalMessages / 10000) * 100, 100)}%`
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Unread Messages */}
-          <div className="group relative overflow-hidden bg-gray-950 rounded-2xl p-6 border border-gray-800 hover:border-gray-600 transition-all duration-300 hover:shadow-xl">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-amber-500/5 to-red-600/5 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-500" />
-            <div className="relative">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 bg-gradient-to-br from-amber-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
-                  <AlertTriangle className="text-white" size={24} />
-                </div>
-                <div className="flex-1">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
-                    Unread Messages
-                  </div>
-                  <div className="text-4xl font-bold text-white mt-1 tabular-nums">
-                    {unreadCount.toLocaleString()}
-                  </div>
-                </div>
-              </div>
-              <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-500 to-red-600 rounded-full transition-all duration-500"
-                  style={{
-                    width: `${Math.min((unreadCount / 1000) * 100, 100)}%`
-                  }}
-                />
-              </div>
-            </div>
-          </div>
+        {/* Main Stats Grid - 2x2 */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            title="Total Messages"
+            value={totalMessages}
+            icon={Mail}
+            iconBg="bg-blue-500/20"
+          />
+          <StatCard
+            title="Unread"
+            value={unreadCount}
+            icon={MailOpen}
+            iconBg="bg-amber-500/20"
+            valueColor="text-amber-400"
+          />
+          <StatCard
+            title="Read Rate"
+            value={`${formattedReadRate}%`}
+            icon={Activity}
+            iconBg={getReadRateBg()}
+            valueColor={getReadRateColor()}
+            trend={getTrendIcon()}
+          />
+          <StatCard
+            title="Weekly Trend"
+            value={weeklyTrend > 0 ? `+${weeklyTrend}` : weeklyTrend || 0}
+            icon={TrendingUp}
+            iconBg="bg-cyan-500/20"
+            valueColor={weeklyTrend >= 0 ? 'text-emerald-400' : 'text-red-400'}
+          />
         </div>
 
-        {/* Secondary Stats */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          {/* Read Rate */}
-          <div className="bg-gray-950/50 rounded-xl p-4 border border-gray-800 hover:bg-gray-950 transition-all duration-300">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-500">Read Rate</span>
-              <Shield size={14} className="text-gray-600" />
-            </div>
-            <div className={`text-2xl font-bold ${getReadRateColor()}`}>
-              {readRate || 0}%
-            </div>
-            <div className="mt-2 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-500"
-                style={{ width: `${readRate || 0}%` }}
-              />
+        {/* Detailed Stats - Show/Hide */}
+        {showDetails && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 animate-slideDown">
+            <MetricCard
+              label="Read Rate Progress"
+              value={`${formattedReadRate}%`}
+              icon={CheckCircle}
+              progress={readRate}
+              color="emerald"
+            />
+            <MetricCard
+              label="Unread Ratio"
+              value={`${unreadCount > 0 ? ((unreadCount / totalMessages) * 100).toFixed(1) : 0}%`}
+              icon={AlertTriangle}
+              progress={unreadCount > 0 ? (unreadCount / totalMessages) * 100 : 0}
+              color="amber"
+            />
+            <div className="bg-gray-900/30 rounded-xl p-4 border border-gray-800">
+              <div className="flex items-center gap-2 mb-2">
+                <Users size={14} className="text-purple-400" />
+                <span className="text-xs text-gray-500">Message Distribution</span>
+              </div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-gray-400">Read vs Unread</span>
+                <span className="text-xs text-gray-500">
+                  {formattedReadRate}% / {(100 - readRate).toFixed(1)}%
+                </span>
+              </div>
+              <div className="flex h-2 rounded-full overflow-hidden">
+                <div className="bg-emerald-500" style={{ width: `${readRate}%` }} />
+                <div className="bg-amber-500/50" style={{ width: `${100 - readRate}%` }} />
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Weekly Trend */}
-          <div className="bg-gray-950/50 rounded-xl p-4 border border-gray-800 hover:bg-gray-950 transition-all duration-300">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-500">Weekly Trend</span>
-              {getTrendIcon()}
-            </div>
-            <div className="text-2xl font-bold text-white">
-              {weeklyTrend > 0 ? "+" : ""}
-              {weeklyTrend || 0}
-            </div>
-            <div className="text-xs text-gray-600 mt-1">vs last week</div>
-          </div>
-        </div>
+        {/* Admin Action Button */}
+        {isAdmin && (
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            className="group relative w-full flex items-center justify-center gap-2 bg-gradient-to-r from-red-500/10 to-red-600/10 hover:from-red-500/20 hover:to-red-600/20 border border-red-500/30 hover:border-red-500/50 text-red-400 py-3 rounded-xl transition-all duration-300 overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-red-500/0 group-hover:bg-red-500/5 transition-colors" />
+            <Trash2 size={16} className="group-hover:scale-110 transition-transform" />
+            <span className="text-sm font-medium">Clean Up Old Messages</span>
+            <Zap size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
+        )}
 
-        {/* Advanced Actions */}
-        <div className="space-y-3">
-          {/* Delete Button - Conditionally rendered based on admin status */}
-          {isAdmin ? (
-            <button
-              onClick={() => setShowDeleteModal(true)}
-              className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-red-500/10 to-red-600/10 hover:from-red-500/20 hover:to-red-600/20 border border-red-500/30 hover:border-red-500/50 text-red-400 py-4 rounded-2xl transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-red-500/0 group-hover:bg-red-500/5 transition-colors" />
-              <Trash2
-                size={20}
-                className="group-hover:scale-110 transition-transform"
-              />
-              <span className="font-medium">Clean Up Old Messages</span>
-              <Zap
-                size={14}
-                className="opacity-0 group-hover:opacity-100 transition-opacity"
-              />
-            </button>
-          ) : (
-            <button
-              onClick={() => setShowAdminRequiredModal(true)}
-              className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-gray-500/10 to-gray-600/10 border border-gray-600/30 text-gray-500 py-4 rounded-2xl cursor-not-allowed transition-all duration-300"
-              disabled
-            >
-              <Lock size={20} className="opacity-50" />
-              <span className="font-medium">Admin Access Required</span>
-              <Shield
-                size={14}
-                className="opacity-0 group-hover:opacity-100 transition-opacity"
-              />
-            </button>
-          )}
-
-          {/* Quick Stats Info */}
-          {storageUsed > 0 && (
-            <div className="flex items-center justify-between text-xs text-gray-600 px-2 py-2">
-              <span>Storage used</span>
-              <span className="font-mono">{formatStorage(storageUsed)}</span>
-            </div>
-          )}
-        </div>
+        {!isAdmin && (
+          <button
+            onClick={() => setShowAdminRequiredModal(true)}
+            className="w-full flex items-center justify-center gap-2 bg-gray-500/10 border border-gray-600/30 text-gray-500 py-3 rounded-xl cursor-not-allowed"
+            disabled
+          >
+            <Lock size={16} className="opacity-50" />
+            <span className="text-sm font-medium">Admin Access Required</span>
+          </button>
+        )}
       </div>
 
-      {/* Admin Required Modal */}
+      {/* Admin Required Modal - Compact */}
       {showAdminRequiredModal && (
         <div
           className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[60] flex items-center justify-center p-4 animate-fadeIn"
           onClick={() => setShowAdminRequiredModal(false)}
         >
           <div
-            className="bg-gradient-to-br from-gray-900 to-gray-950 border border-amber-500/30 rounded-3xl w-full max-w-md overflow-hidden animate-slideUp"
+            className="bg-gray-900 border border-amber-500/30 rounded-2xl w-full max-w-sm overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-8 text-center">
-              <div className="mx-auto w-20 h-20 bg-gradient-to-br from-amber-500/20 to-amber-600/20 rounded-2xl flex items-center justify-center border-2 border-amber-500/30 mb-6">
-                <Shield className="text-amber-400" size={40} />
+            <div className="p-6 text-center">
+              <div className="mx-auto w-14 h-14 bg-amber-500/20 rounded-xl flex items-center justify-center border border-amber-500/30 mb-4">
+                <Shield className="text-amber-400" size={28} />
               </div>
-
-              <h3 className="text-2xl font-bold text-white mb-3">
-                Admin Access Required
-              </h3>
-              <p className="text-gray-400 leading-relaxed mb-6">
-                This action is restricted to administrators only. Please contact
-                your system administrator if you need to delete old messages.
+              <h3 className="text-xl font-bold text-white mb-2">Admin Required</h3>
+              <p className="text-gray-400 text-sm mb-5">
+                This action is restricted to administrators only.
               </p>
-
               <button
                 onClick={() => setShowAdminRequiredModal(false)}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-medium transition-all active:scale-95"
+                className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-sm transition"
               >
                 Understood
               </button>
@@ -348,62 +354,36 @@ export default function Stats({
         </div>
       )}
 
-      {/* Enhanced Delete Confirmation Modal */}
+      {/* Delete Modal - Compact */}
       {showDeleteModal && (
         <div
           className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[60] flex items-center justify-center p-4 animate-fadeIn"
           onClick={() => setShowDeleteModal(false)}
         >
           <div
-            className="bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-700 rounded-3xl w-full max-w-md overflow-hidden animate-slideUp"
+            className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-sm overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Admin Warning Banner */}
-            <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border-b border-purple-500/20 px-6 py-3 flex items-center gap-2">
-              <Shield size={16} className="text-purple-400" />
-              <span className="text-xs text-purple-300 font-medium">
-                Administrator Action
-              </span>
+            {/* Header */}
+            <div className="bg-red-500/10 border-b border-red-500/20 px-4 py-3 flex items-center gap-2">
+              <AlertTriangle size={14} className="text-red-400" />
+              <span className="text-xs text-red-400 font-medium">Warning: Permanent Action</span>
             </div>
 
-            {/* Animated Header */}
-            <div className="relative p-8 text-center">
-              <div
-                className={`absolute inset-0 bg-gradient-to-br from-red-500/10 to-transparent transition-opacity duration-500 ${
-                  showConfirmAnimation ? "opacity-100" : "opacity-0"
-                }`}
-              />
-
-              <div
-                className={`mx-auto w-20 h-20 bg-gradient-to-br from-red-500/20 to-red-600/20 rounded-2xl flex items-center justify-center border-2 border-red-500/30 mb-6 transition-all duration-300 ${
-                  showConfirmAnimation ? "scale-110" : "scale-100"
-                }`}
-              >
-                {showConfirmAnimation ? (
-                  <div className="animate-spin rounded-full w-8 h-8 border-2 border-red-400 border-t-transparent" />
-                ) : (
-                  <AlertTriangle className="text-red-400" size={40} />
-                )}
+            {/* Content */}
+            <div className="p-5">
+              <div className="flex items-center justify-center mb-4">
+                <div className="w-12 h-12 bg-red-500/20 rounded-xl flex items-center justify-center">
+                  <Trash2 className="text-red-400" size={24} />
+                </div>
               </div>
-
-              <h3 className="text-2xl font-bold text-white mb-3">
-                Delete Old Messages
-              </h3>
-              <p className="text-gray-400 leading-relaxed">
-                This action cannot be undone. Messages older than the selected
-                period will be permanently removed from your system.
+              <h3 className="text-lg font-bold text-white text-center mb-2">Delete Old Messages</h3>
+              <p className="text-gray-400 text-xs text-center mb-5">
+                This action cannot be undone. Messages older than selected period will be removed.
               </p>
-            </div>
 
-            {/* Time Selection */}
-            <div className="px-8 pb-6">
-              <label className="block text-sm font-medium text-gray-300 mb-4 flex items-center gap-2">
-                <Calendar size={16} />
-                Delete messages older than
-              </label>
-
-              {/* Preset Buttons */}
-              <div className="grid grid-cols-3 gap-2 mb-4">
+              {/* Presets */}
+              <div className="flex gap-1.5 mb-4">
                 {presets.map((preset) => (
                   <button
                     key={preset.days}
@@ -411,7 +391,7 @@ export default function Stats({
                       setDeleteDays(preset.days);
                       setSelectedPreset(preset.days);
                     }}
-                    className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                    className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium transition ${
                       deleteDays === preset.days
                         ? "bg-red-500/20 border-red-500/50 text-red-400"
                         : "bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700"
@@ -422,9 +402,9 @@ export default function Stats({
                 ))}
               </div>
 
-              {/* Custom Slider */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-4">
+              {/* Slider */}
+              <div className="space-y-2 mb-4">
+                <div className="flex items-center gap-3">
                   <input
                     type="range"
                     min="1"
@@ -435,89 +415,75 @@ export default function Stats({
                       setDeleteDays(Number(e.target.value));
                       setSelectedPreset(null);
                     }}
-                    className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-red-500"
+                    className="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-red-500"
                   />
-                  <div className="bg-gray-800 px-5 py-3 rounded-2xl font-mono text-lg font-semibold text-white min-w-[85px] text-center border border-gray-700">
+                  <div className="bg-gray-800 px-3 py-1.5 rounded-lg font-mono text-sm font-semibold text-white min-w-[60px] text-center">
                     {deleteDays}d
                   </div>
                 </div>
-                <div className="flex justify-between text-xs text-gray-600 px-1">
-                  <span>1 day</span>
-                  <span>1 year</span>
-                  <span>2 years</span>
+                <div className="flex justify-between text-[10px] text-gray-600 px-1">
+                  <span>1d</span>
+                  <span>1y</span>
+                  <span>2y</span>
                 </div>
               </div>
 
               {/* Warning */}
-              <div className="mt-6 p-4 bg-amber-500/5 border border-amber-500/20 rounded-2xl">
-                <div className="flex items-start gap-3">
-                  <Bell
-                    size={16}
-                    className="text-amber-400 mt-0.5 flex-shrink-0"
-                  />
-                  <div className="text-xs text-amber-400/80">
-                    This will permanently delete approximately{" "}
-                    <span className="font-bold text-amber-300">
-                      {Math.floor(totalMessages * (deleteDays / 365))}
-                    </span>{" "}
-                    messages
-                  </div>
+              <div className="p-2 bg-amber-500/5 border border-amber-500/20 rounded-lg mb-4">
+                <div className="flex items-start gap-2">
+                  <Bell size={12} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                  <span className="text-[10px] text-amber-400/80">
+                    Will delete ~{Math.floor(totalMessages * (deleteDays / 365))} messages
+                  </span>
                 </div>
               </div>
-            </div>
 
-            {/* Actions */}
-            <div className="border-t border-gray-800 p-5 flex gap-3">
-              <button
-                onClick={() => setShowDeleteModal(false)}
-                className="flex-1 py-4 rounded-2xl bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium transition-all active:scale-95"
-                disabled={isDeleting}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteOld}
-                disabled={isDeleting}
-                className="flex-1 py-4 rounded-2xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 disabled:from-red-800 disabled:to-red-800 text-white font-medium flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-red-500/20"
-              >
-                {isDeleting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 size={18} />
-                    Confirm Delete
-                  </>
-                )}
-              </button>
+              {/* Actions */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  className="flex-1 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium transition"
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteOld}
+                  disabled={isDeleting}
+                  className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-red-800 text-white text-sm font-medium flex items-center justify-center gap-1.5 transition"
+                >
+                  {isDeleting ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={12} />
+                      Confirm
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Enhanced Success Toast */}
+      {/* Success Toast */}
       {showSuccess && (
-        <div className="fixed bottom-8 right-8 z-[70] animate-slideUp">
-          <div className="bg-gradient-to-br from-emerald-900 to-emerald-950 border border-emerald-500/30 rounded-2xl shadow-2xl overflow-hidden">
-            <div className="flex items-start gap-4 p-5 pr-12 relative">
-              <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-emerald-400 to-emerald-600" />
-              <div className="w-12 h-12 bg-emerald-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="text-emerald-400" size={28} />
+        <div className="fixed bottom-4 right-4 z-[70] animate-slideUp">
+          <div className="bg-emerald-900/95 border border-emerald-500/30 rounded-xl shadow-xl overflow-hidden">
+            <div className="flex items-center gap-3 p-3 pr-8 relative">
+              <div className="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center">
+                <CheckCircle className="text-emerald-400" size={16} />
               </div>
               <div>
-                <p className="font-bold text-emerald-100">Cleanup Complete</p>
-                <p className="text-emerald-300/80 text-sm mt-1">
-                  Successfully deleted {deletedCount.toLocaleString()} old
-                  messages
-                </p>
+                <p className="font-semibold text-emerald-100 text-sm">Cleanup Complete</p>
+                <p className="text-emerald-300/80 text-xs">Deleted {deletedCount.toLocaleString()} messages</p>
               </div>
-              <button
-                onClick={() => setShowSuccess(false)}
-                className="absolute top-3 right-3 text-emerald-400/60 hover:text-emerald-300 transition-colors"
-              >
-                <X size={18} />
+              <button onClick={() => setShowSuccess(false)} className="absolute top-2 right-2 text-emerald-400/60 hover:text-emerald-300">
+                <X size={12} />
               </button>
             </div>
           </div>
@@ -526,32 +492,20 @@ export default function Stats({
 
       <style jsx>{`
         @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
-
         @keyframes slideUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
         }
-
-        .animate-fadeIn {
-          animation: fadeIn 0.3s ease-out;
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
         }
-
-        .animate-slideUp {
-          animation: slideUp 0.4s ease-out;
-        }
+        .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
+        .animate-slideUp { animation: slideUp 0.3s ease-out; }
+        .animate-slideDown { animation: slideDown 0.2s ease-out; }
       `}</style>
     </>
   );

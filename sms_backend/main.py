@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Query, HTTPException, Body, Depends, status
+from fastapi import FastAPI, Query, HTTPException, Body, Depends, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import text
+from sqlalchemy import text, desc, func, or_
+from sqlalchemy.orm import Session
 import threading
 import logging
 import traceback
@@ -12,6 +13,8 @@ import jwt
 import hashlib
 import os
 from dotenv import load_dotenv
+import pandas as pd
+import uuid
 
 # Load environment variables
 load_dotenv()
@@ -28,7 +31,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
-# ==================== CORS Configuration - FIXED ====================
+# ==================== CORS Configuration ====================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -39,6 +42,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5500",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -139,7 +143,6 @@ async def get_current_user(
     if not user_id or not username:
         raise HTTPException(status_code=401, detail="Invalid token payload")
     
-    # Get user from database
     try:
         from database import SessionLocal
         from models_db import User
@@ -185,19 +188,14 @@ async def register_user(user_data: UserCreate):
         
         db = SessionLocal()
         
-        # Check if user exists
         existing_user = db.query(User).filter(
             (User.username == user_data.username) | (User.email == user_data.email)
         ).first()
         
         if existing_user:
             db.close()
-            raise HTTPException(
-                status_code=400,
-                detail="Username or email already exists"
-            )
+            raise HTTPException(status_code=400, detail="Username or email already exists")
         
-        # Create new user
         new_user = User(
             username=user_data.username,
             email=user_data.email,
@@ -212,7 +210,6 @@ async def register_user(user_data: UserCreate):
         db.commit()
         db.refresh(new_user)
         
-        # Create access token
         access_token = create_access_token(
             data={"sub": str(new_user.id), "username": new_user.username, "role": new_user.role}
         )
@@ -250,23 +247,15 @@ async def login(user_data: UserLogin):
         
         if not user or not verify_password(user_data.password, user.password_hash):
             db.close()
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid username or password"
-            )
+            raise HTTPException(status_code=401, detail="Invalid username or password")
         
         if not user.is_active:
             db.close()
-            raise HTTPException(
-                status_code=403,
-                detail="Account is disabled. Please contact administrator."
-            )
+            raise HTTPException(status_code=403, detail="Account is disabled")
         
-        # Update last login
         user.last_login = datetime.now()
         db.commit()
         
-        # Create access token
         access_token = create_access_token(
             data={"sub": str(user.id), "username": user.username, "role": user.role}
         )
@@ -322,11 +311,9 @@ async def change_password(
         from database import SessionLocal
         from models_db import User
         
-        # Verify old password
         if not verify_password(password_data.old_password, current_user.password_hash):
             raise HTTPException(status_code=401, detail="Incorrect current password")
         
-        # Update password
         db = SessionLocal()
         user = db.query(User).filter(User.id == current_user.id).first()
         user.password_hash = get_password_hash(password_data.new_password)
@@ -492,11 +479,28 @@ async def delete_user(
         logger.error(f"Delete user error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==================== Helper Functions ====================
+
+def convert_to_serializable(msg):
+    """Convert database message to serializable dict"""
+    return {
+        'id': msg.id,
+        'file_id': msg.file_id,
+        'number': msg.number,
+        'date': msg.date,
+        'time': msg.time,
+        'message': msg.message,
+        'is_read': msg.is_read,
+        'created_at': msg.created_at.isoformat() if msg.created_at else None,
+        'read_at': msg.read_at.isoformat() if hasattr(msg, 'read_at') and msg.read_at else None,
+        'message_length': len(msg.message) if msg.message else 0
+    }
+
 # ==================== Message Endpoints (Protected) ====================
 
 @app.get("/messages")
 async def get_all_messages(
-    limit: Optional[int] = Query(None, ge=1, le=1000),
+    limit: Optional[int] = Query(None, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     unread_only: bool = Query(False),
     sender: Optional[str] = Query(None),
@@ -506,11 +510,8 @@ async def get_all_messages(
     try:
         from database import SessionLocal
         from models_db import SMSDB
-        from sqlalchemy import desc
         
         db = SessionLocal()
-        
-        # Build query
         query = db.query(SMSDB)
         
         if unread_only:
@@ -519,13 +520,9 @@ async def get_all_messages(
         if sender:
             query = query.filter(SMSDB.number == sender)
         
-        # Order by created_at descending (newest first)
+        total = query.count()
         query = query.order_by(desc(SMSDB.created_at))
         
-        # Get total count
-        total = query.count()
-        
-        # Apply pagination
         if limit:
             query = query.limit(limit).offset(offset)
         
@@ -536,18 +533,45 @@ async def get_all_messages(
             "total": total,
             "count": len(messages),
             "messages": [convert_to_serializable(msg) for msg in messages],
-            "page": (offset // limit) + 1 if limit else 1,
+            "offset": offset,
             "limit": limit
         }
         
     except Exception as e:
         logger.error(f"Error in get_all_messages: {e}")
-        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
+
+@app.get("/messages/all")
+async def get_all_messages_no_limit(
+    current_user=Depends(get_current_active_user)
+):
+    """Get ALL messages without pagination limit"""
+    try:
+        from database import SessionLocal
+        from models_db import SMSDB
+        from sqlalchemy import desc
+        
+        db = SessionLocal()
+        messages = db.query(SMSDB).order_by(desc(SMSDB.created_at)).all()
+        total = len(messages)
+        
+        db.close()
+        
+        logger.info(f"User {current_user.username} fetched all {total} messages")
+        
+        return {
+            "total": total,
+            "count": len(messages),
+            "messages": [convert_to_serializable(msg) for msg in messages]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in get_all_messages_no_limit: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/messages/new")
 async def get_new_messages(
-    limit: Optional[int] = Query(50, ge=1, le=500),
+    limit: Optional[int] = Query(1000, ge=1, le=5000),
     current_user=Depends(get_current_active_user)
 ):
     """Get unread messages (authenticated)"""
@@ -592,11 +616,7 @@ async def mark_message_as_read(
         db.close()
         
         if result > 0:
-            return {
-                "status": "success",
-                "message": f"Message {file_id} marked as read",
-                "file_id": file_id
-            }
+            return {"status": "success", "message": f"Message {file_id} marked as read", "file_id": file_id}
         else:
             raise HTTPException(status_code=404, detail=f"Message with file_id '{file_id}' not found")
             
@@ -615,15 +635,12 @@ async def send_sms(
 ):
     """Send a single SMS message"""
     try:
-        import uuid
-        
         message_id = str(uuid.uuid4())
         
         from database import SessionLocal
         from models_db import SendLog
         
         db = SessionLocal()
-        
         send_log = SendLog(
             message_id=message_id,
             to_number=message_data.to_number,
@@ -662,7 +679,6 @@ async def send_batch_sms(
         
         for msg in batch_data.messages:
             try:
-                import uuid
                 message_id = str(uuid.uuid4())
                 
                 from database import SessionLocal
@@ -709,7 +725,7 @@ async def send_batch_sms(
 
 @app.get("/messages/sent")
 async def get_sent_messages(
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     current_user=Depends(get_current_active_user)
 ):
@@ -728,7 +744,6 @@ async def get_sent_messages(
         
         total = query.count()
         messages = query.order_by(desc(SendLog.sent_at)).limit(limit).offset(offset).all()
-        
         db.close()
         
         return {
@@ -903,6 +918,146 @@ async def get_statistics(current_user=Depends(get_current_active_user)):
         logger.error(f"Error in get_statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==================== Contact Management Endpoints ====================
+
+from models_db import Contact
+
+@app.get("/contacts")
+async def get_contacts(
+    search: Optional[str] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    current_user=Depends(get_current_active_user)
+):
+    """Get all contacts with search"""
+    try:
+        from database import SessionLocal
+        
+        db = SessionLocal()
+        query = db.query(Contact)
+        
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Contact.country.ilike(search_term),
+                    Contact.president_name.ilike(search_term),
+                    Contact.director_name.ilike(search_term),
+                    Contact.coordinator_name.ilike(search_term),
+                    Contact.rf_technician_name.ilike(search_term),
+                    Contact.af_it_name.ilike(search_term),
+                    Contact.editorial_assistant_name.ilike(search_term)
+                )
+            )
+        
+        total = query.count()
+        contacts = query.offset(offset).limit(limit).all()
+        db.close()
+        
+        return {
+            "total": total,
+            "count": len(contacts),
+            "contacts": [c.to_dict() for c in contacts]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting contacts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/contacts/upload")
+async def upload_contacts(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_admin_user)
+):
+    """Upload and process Excel contact list (admin only)"""
+    try:
+        df = pd.read_excel(file.file)
+        
+        from database import SessionLocal
+        db = SessionLocal()
+        
+        # Clear existing contacts
+        db.query(Contact).delete()
+        
+        contacts_created = 0
+        
+        for _, row in df.iterrows():
+            contact = Contact(
+                country=str(row.get('Country', '')) if pd.notna(row.get('Country')) else None,
+                
+                president_name=str(row.get('President')) if pd.notna(row.get('President')) else None,
+                president_email1=str(row.get('mail 1')) if pd.notna(row.get('mail 1')) else None,
+                president_email2=str(row.get('mail 2')) if pd.notna(row.get('mail 2')) else None,
+                president_tel=str(row.get('tel')) if pd.notna(row.get('tel')) else None,
+                
+                director_name=str(row.get('Director')) if pd.notna(row.get('Director')) else None,
+                director_email1=str(row.get('mail 1.1')) if pd.notna(row.get('mail 1.1')) else None,
+                director_email2=str(row.get('mail 2.1')) if pd.notna(row.get('mail 2.1')) else None,
+                director_tel=str(row.get('tel.1')) if pd.notna(row.get('tel.1')) else None,
+                
+                coordinator_name=str(row.get('coordinator')) if pd.notna(row.get('coordinator')) else None,
+                coordinator_email1=str(row.get('mail 1.2')) if pd.notna(row.get('mail 1.2')) else None,
+                coordinator_email2=str(row.get('mail 2.2')) if pd.notna(row.get('mail 2.2')) else None,
+                coordinator_tel=str(row.get('tel.2')) if pd.notna(row.get('tel.2')) else None,
+                
+                rf_technician_name=str(row.get('RF technician')) if pd.notna(row.get('RF technician')) else None,
+                rf_technician_email1=str(row.get('mail 1.3')) if pd.notna(row.get('mail 1.3')) else None,
+                rf_technician_email2=str(row.get('mail 2.3')) if pd.notna(row.get('mail 2.3')) else None,
+                
+                af_it_name=str(row.get('AF/IT')) if pd.notna(row.get('AF/IT')) else None,
+                af_it_email1=str(row.get('mail 1.4')) if pd.notna(row.get('mail 1.4')) else None,
+                af_it_email2=str(row.get('mail 2.4')) if pd.notna(row.get('mail 2.4')) else None,
+                
+                editorial_assistant_name=str(row.get('editorial assistant')) if pd.notna(row.get('editorial assistant')) else None,
+                editorial_assistant_email1=str(row.get('mail 1.5')) if pd.notna(row.get('mail 1.5')) else None,
+                editorial_assistant_email2=str(row.get('mail 2.5')) if pd.notna(row.get('mail 2.5')) else None,
+                editorial_assistant_tel=str(row.get('tel.3')) if pd.notna(row.get('tel.3')) else None,
+                
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+            db.add(contact)
+            contacts_created += 1
+        
+        db.commit()
+        db.close()
+        
+        return {
+            "status": "success",
+            "message": f"Successfully imported {contacts_created} contacts",
+            "count": contacts_created
+        }
+        
+    except Exception as e:
+        logger.error(f"Error uploading contacts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/contacts/{contact_id}")
+async def delete_contact(
+    contact_id: int,
+    current_user=Depends(get_current_admin_user)
+):
+    """Delete a contact (admin only)"""
+    try:
+        from database import SessionLocal
+        db = SessionLocal()
+        
+        contact = db.query(Contact).filter(Contact.id == contact_id).first()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        
+        db.delete(contact)
+        db.commit()
+        db.close()
+        
+        return {"status": "success", "message": "Contact deleted"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting contact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ==================== Public Endpoints (No Auth Required) ====================
 
 @app.get("/")
@@ -915,8 +1070,9 @@ def root():
         "authentication": "JWT required for most endpoints",
         "endpoints": {
             "auth": ["/auth/login", "/auth/register", "/auth/me", "/auth/refresh", "/auth/change-password"],
-            "messages": ["/messages", "/messages/new", "/messages/send", "/messages/sent"],
+            "messages": ["/messages", "/messages/all", "/messages/new", "/messages/send", "/messages/sent"],
             "admin": ["/admin/users"],
+            "contacts": ["/contacts", "/contacts/upload", "/contacts/{id}"],
             "stats": ["/stats"],
             "public": ["/", "/health"]
         },
@@ -946,30 +1102,13 @@ def health_check():
             "timestamp": datetime.now().isoformat()
         }
 
-# ==================== Helper Functions ====================
-
-def convert_to_serializable(msg):
-    """Convert database message to serializable dict"""
-    return {
-        'id': msg.id,
-        'file_id': msg.file_id,
-        'number': msg.number,
-        'date': msg.date,
-        'time': msg.time,
-        'message': msg.message,
-        'is_read': msg.is_read,
-        'created_at': msg.created_at.isoformat() if msg.created_at else None,
-        'read_at': msg.read_at.isoformat() if hasattr(msg, 'read_at') and msg.read_at else None,
-        'message_length': len(msg.message) if msg.message else 0
-    }
-
 # ==================== Database Setup ====================
 
 def setup_database():
     """Initialize database tables and create default admin user"""
     try:
         from database import engine
-        from models_db import Base, User, SMSDB, SendLog
+        from models_db import Base, User, SMSDB, SendLog, Contact
         
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created successfully")
