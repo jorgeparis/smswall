@@ -10,15 +10,7 @@ import Stats from "./components/Stats";
 
 const API_BASE = "http://localhost:8000";
 
-// In App.jsx
-const [isPremium, setIsPremium] = useState(false);
-const [showRadioPlayer, setShowRadioPlayer] = useState(false);
 
-// Check premium status from localStorage
-useEffect(() => {
-  const premium = localStorage.getItem("isPremium") === "true";
-  setIsPremium(premium);
-}, []);
 
 // Helper functions
 const getAuthToken = () => sessionStorage.getItem("access_token");

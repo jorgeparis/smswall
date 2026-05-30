@@ -178,7 +178,7 @@ export default function Login({ onLogin }) {
         {/* Footer */}
         <div className="text-center mt-6">
           <p className="text-xs text-slate-500">
-            Secure message management platform
+            Secure message management platform - version 1.1 Jorge Paris
           </p>
         </div>
       </div>
