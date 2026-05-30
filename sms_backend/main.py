@@ -1,4 +1,7 @@
-from fastapi import FastAPI, Query, HTTPException, Body, Depends, status, UploadFile, File
+from Crypto.Util.Padding import unpad
+from Crypto.Cipher import AES
+from models_db import Contact
+from fastapi import FastAPI, Query, HTTPException, Body, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import List, Optional, Dict, Any
@@ -15,6 +18,8 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import uuid
+import base64
+import json
 
 # Load environment variables
 load_dotenv()
@@ -27,9 +32,11 @@ app = FastAPI(title="SMS Wall API", version="2.1.0")
 security = HTTPBearer()
 
 # JWT Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+SECRET_KEY = os.getenv(
+    "SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
 # ==================== CORS Configuration ====================
 app.add_middleware(
@@ -57,11 +64,41 @@ app.add_middleware(
     max_age=3600,
 )
 
+# ==================== AES Decryption for CryptoJS ====================
+
+# Use a fixed key derived from SECRET_KEY (must match frontend)
+ENCRYPTION_KEY = hashlib.sha256(SECRET_KEY.encode()).digest()[
+    :32]  # 32 bytes for AES-256
+
+
+def aes_decrypt(encrypted_data: str) -> str:
+    """Decrypt text encrypted by CryptoJS AES (IV + ciphertext combined)"""
+    try:
+        # Decode base64
+        combined = base64.b64decode(encrypted_data)
+
+        # Extract IV (first 16 bytes) and ciphertext
+        iv = combined[:16]
+        ciphertext = combined[16:]
+
+        # Create cipher
+        cipher = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
+
+        # Decrypt and unpad
+        decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
+
+        return decrypted.decode('utf-8')
+    except Exception as e:
+        logger.error(f"AES decryption error: {e}")
+        raise ValueError(f"Decryption failed: {str(e)}")
+
 # ==================== Pydantic Models ====================
+
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    email: str = Field(..., pattern=r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    email: str = Field(...,
+                       pattern=r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
     password: str = Field(..., min_length=6)
     full_name: Optional[str] = None
 
@@ -69,12 +106,15 @@ class UserCreate(BaseModel):
     @classmethod
     def username_alphanumeric(cls, v):
         if not v.replace('_', '').isalnum():
-            raise ValueError('Username must be alphanumeric or contain underscores')
+            raise ValueError(
+                'Username must be alphanumeric or contain underscores')
         return v
+
 
 class UserLogin(BaseModel):
     username: str
     password: str
+
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -82,30 +122,37 @@ class TokenResponse(BaseModel):
     expires_in: int
     user: Dict[str, Any]
 
+
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str = Field(..., min_length=6)
+
 
 class SendMessageRequest(BaseModel):
     to_number: str = Field(..., min_length=10, max_length=15)
     message: str = Field(..., min_length=1, max_length=1600)
     sender_id: Optional[str] = Field(None, max_length=11)
 
+
 class SendBatchRequest(BaseModel):
     messages: List[SendMessageRequest]
+
 
 class DeleteOldMessagesRequest(BaseModel):
     days: int = Field(30, ge=1, le=365)
 
 # ==================== Authentication Helpers ====================
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password against hash using SHA-256"""
     return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
+
 def get_password_hash(password: str) -> str:
     """Hash password using SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token"""
@@ -114,10 +161,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+
     to_encode.update({"exp": expire, "iat": datetime.utcnow()})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
 
 def decode_token(token: str) -> dict:
     """Decode JWT token"""
@@ -129,44 +177,48 @@ def decode_token(token: str) -> dict:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Get current user from JWT token"""
     token = credentials.credentials
     payload = decode_token(token)
-    
+
     user_id = payload.get("sub")
     username = payload.get("username")
     role = payload.get("role")
-    
+
     if not user_id or not username:
         raise HTTPException(status_code=401, detail="Invalid token payload")
-    
+
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         db = SessionLocal()
         user = db.query(User).filter(User.id == int(user_id)).first()
         db.close()
-        
+
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        
+
         if not user.is_active:
-            raise HTTPException(status_code=403, detail="User account is disabled")
-        
+            raise HTTPException(
+                status_code=403, detail="User account is disabled")
+
         return user
     except Exception as e:
         logger.error(f"Error getting current user: {e}")
         raise HTTPException(status_code=401, detail="Authentication failed")
+
 
 async def get_current_active_user(current_user=Depends(get_current_user)):
     """Get current active user"""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
+
 
 async def get_current_admin_user(current_user=Depends(get_current_active_user)):
     """Get current admin user (requires admin role)"""
@@ -179,23 +231,26 @@ async def get_current_admin_user(current_user=Depends(get_current_active_user)):
 
 # ==================== Auth Endpoints ====================
 
+
 @app.post("/auth/register", response_model=TokenResponse)
 async def register_user(user_data: UserCreate):
     """Register a new user"""
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         db = SessionLocal()
-        
+
         existing_user = db.query(User).filter(
-            (User.username == user_data.username) | (User.email == user_data.email)
+            (User.username == user_data.username) | (
+                User.email == user_data.email)
         ).first()
-        
+
         if existing_user:
             db.close()
-            raise HTTPException(status_code=400, detail="Username or email already exists")
-        
+            raise HTTPException(
+                status_code=400, detail="Username or email already exists")
+
         new_user = User(
             username=user_data.username,
             email=user_data.email,
@@ -205,17 +260,18 @@ async def register_user(user_data: UserCreate):
             is_active=True,
             created_at=datetime.now()
         )
-        
+
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        
+
         access_token = create_access_token(
-            data={"sub": str(new_user.id), "username": new_user.username, "role": new_user.role}
+            data={"sub": str(new_user.id),
+                  "username": new_user.username, "role": new_user.role}
         )
-        
+
         db.close()
-        
+
         return {
             "access_token": access_token,
             "token_type": "bearer",
@@ -228,12 +284,13 @@ async def register_user(user_data: UserCreate):
                 "full_name": new_user.full_name
             }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(user_data: UserLogin):
@@ -241,27 +298,30 @@ async def login(user_data: UserLogin):
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         db = SessionLocal()
-        user = db.query(User).filter(User.username == user_data.username).first()
-        
+        user = db.query(User).filter(
+            User.username == user_data.username).first()
+
         if not user or not verify_password(user_data.password, user.password_hash):
             db.close()
-            raise HTTPException(status_code=401, detail="Invalid username or password")
-        
+            raise HTTPException(
+                status_code=401, detail="Invalid username or password")
+
         if not user.is_active:
             db.close()
             raise HTTPException(status_code=403, detail="Account is disabled")
-        
+
         user.last_login = datetime.now()
         db.commit()
-        
+
         access_token = create_access_token(
-            data={"sub": str(user.id), "username": user.username, "role": user.role}
+            data={"sub": str(user.id), "username": user.username,
+                  "role": user.role}
         )
-        
+
         db.close()
-        
+
         return {
             "access_token": access_token,
             "token_type": "bearer",
@@ -277,21 +337,23 @@ async def login(user_data: UserLogin):
                 "last_login": user.last_login.isoformat() if user.last_login else None
             }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/auth/refresh")
 async def refresh_token(current_user=Depends(get_current_user)):
     """Refresh access token"""
     try:
         new_token = create_access_token(
-            data={"sub": str(current_user.id), "username": current_user.username, "role": current_user.role}
+            data={"sub": str(
+                current_user.id), "username": current_user.username, "role": current_user.role}
         )
-        
+
         return {
             "access_token": new_token,
             "token_type": "bearer",
@@ -300,6 +362,7 @@ async def refresh_token(current_user=Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Token refresh error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/auth/change-password")
 async def change_password(
@@ -310,23 +373,25 @@ async def change_password(
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         if not verify_password(password_data.old_password, current_user.password_hash):
-            raise HTTPException(status_code=401, detail="Incorrect current password")
-        
+            raise HTTPException(
+                status_code=401, detail="Incorrect current password")
+
         db = SessionLocal()
         user = db.query(User).filter(User.id == current_user.id).first()
         user.password_hash = get_password_hash(password_data.new_password)
         db.commit()
         db.close()
-        
+
         return {"status": "success", "message": "Password changed successfully"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Password change error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/auth/me")
 async def get_me(current_user=Depends(get_current_user)):
@@ -344,6 +409,7 @@ async def get_me(current_user=Depends(get_current_user)):
 
 # ==================== Admin User Management ====================
 
+
 @app.get("/admin/users")
 async def list_users(
     skip: int = Query(0, ge=0),
@@ -354,12 +420,12 @@ async def list_users(
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         db = SessionLocal()
         users = db.query(User).offset(skip).limit(limit).all()
         total = db.query(User).count()
         db.close()
-        
+
         return {
             "total": total,
             "users": [
@@ -376,10 +442,11 @@ async def list_users(
                 for u in users
             ]
         }
-        
+
     except Exception as e:
         logger.error(f"List users error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.put("/admin/users/{user_id}/role")
 async def update_user_role(
@@ -391,28 +458,29 @@ async def update_user_role(
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         if role not in ["admin", "user"]:
             raise HTTPException(status_code=400, detail="Invalid role")
-        
+
         db = SessionLocal()
         user = db.query(User).filter(User.id == user_id).first()
-        
+
         if not user:
             db.close()
             raise HTTPException(status_code=404, detail="User not found")
-        
+
         user.role = role
         db.commit()
         db.close()
-        
+
         return {"status": "success", "message": f"User role updated to {role}"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Update role error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.put("/admin/users/{user_id}/toggle-status")
 async def toggle_user_status(
@@ -423,29 +491,31 @@ async def toggle_user_status(
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         if user_id == admin_user.id:
-            raise HTTPException(status_code=400, detail="Cannot modify your own status")
-        
+            raise HTTPException(
+                status_code=400, detail="Cannot modify your own status")
+
         db = SessionLocal()
         user = db.query(User).filter(User.id == user_id).first()
-        
+
         if not user:
             db.close()
             raise HTTPException(status_code=404, detail="User not found")
-        
+
         user.is_active = not user.is_active
         db.commit()
         db.close()
-        
+
         status_text = "enabled" if user.is_active else "disabled"
         return {"status": "success", "message": f"User account {status_text}"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Toggle user status error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.delete("/admin/users/{user_id}")
 async def delete_user(
@@ -456,23 +526,24 @@ async def delete_user(
     try:
         from database import SessionLocal
         from models_db import User
-        
+
         if user_id == admin_user.id:
-            raise HTTPException(status_code=400, detail="Cannot delete yourself")
-        
+            raise HTTPException(
+                status_code=400, detail="Cannot delete yourself")
+
         db = SessionLocal()
         user = db.query(User).filter(User.id == user_id).first()
-        
+
         if not user:
             db.close()
             raise HTTPException(status_code=404, detail="User not found")
-        
+
         db.delete(user)
         db.commit()
         db.close()
-        
+
         return {"status": "success", "message": f"User deleted successfully"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -480,6 +551,7 @@ async def delete_user(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Helper Functions ====================
+
 
 def convert_to_serializable(msg):
     """Convert database message to serializable dict"""
@@ -498,6 +570,7 @@ def convert_to_serializable(msg):
 
 # ==================== Message Endpoints (Protected) ====================
 
+
 @app.get("/messages")
 async def get_all_messages(
     limit: Optional[int] = Query(None, ge=1, le=10000),
@@ -510,25 +583,25 @@ async def get_all_messages(
     try:
         from database import SessionLocal
         from models_db import SMSDB
-        
+
         db = SessionLocal()
         query = db.query(SMSDB)
-        
+
         if unread_only:
             query = query.filter(SMSDB.is_read == False)
-        
+
         if sender:
             query = query.filter(SMSDB.number == sender)
-        
+
         total = query.count()
         query = query.order_by(desc(SMSDB.created_at))
-        
+
         if limit:
             query = query.limit(limit).offset(offset)
-        
+
         messages = query.all()
         db.close()
-        
+
         return {
             "total": total,
             "count": len(messages),
@@ -536,10 +609,12 @@ async def get_all_messages(
             "offset": offset,
             "limit": limit
         }
-        
+
     except Exception as e:
         logger.error(f"Error in get_all_messages: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
+
 
 @app.get("/messages/all")
 async def get_all_messages_no_limit(
@@ -550,24 +625,26 @@ async def get_all_messages_no_limit(
         from database import SessionLocal
         from models_db import SMSDB
         from sqlalchemy import desc
-        
+
         db = SessionLocal()
         messages = db.query(SMSDB).order_by(desc(SMSDB.created_at)).all()
         total = len(messages)
-        
+
         db.close()
-        
-        logger.info(f"User {current_user.username} fetched all {total} messages")
-        
+
+        logger.info(
+            f"User {current_user.username} fetched all {total} messages")
+
         return {
             "total": total,
             "count": len(messages),
             "messages": [convert_to_serializable(msg) for msg in messages]
         }
-        
+
     except Exception as e:
         logger.error(f"Error in get_all_messages_no_limit: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/messages/new")
 async def get_new_messages(
@@ -579,24 +656,61 @@ async def get_new_messages(
         from database import SessionLocal
         from models_db import SMSDB
         from sqlalchemy import desc
-        
+
         db = SessionLocal()
         messages = db.query(SMSDB).filter(
             SMSDB.is_read == False
         ).order_by(desc(SMSDB.created_at)).limit(limit).all()
-        
+
         total_unread = db.query(SMSDB).filter(SMSDB.is_read == False).count()
         db.close()
-        
+
         return {
             "total_unread": total_unread,
             "count": len(messages),
             "messages": [convert_to_serializable(msg) for msg in messages]
         }
-        
+
     except Exception as e:
         logger.error(f"Error in get_new_messages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/messages/{message_id}")
+async def delete_single_message(
+    message_id: int,
+    current_user=Depends(get_current_active_user)
+):
+    """Delete a single message by ID"""
+    try:
+        from database import SessionLocal
+        from models_db import SMSDB
+
+        db = SessionLocal()
+        message = db.query(SMSDB).filter(SMSDB.id == message_id).first()
+
+        if not message:
+            db.close()
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        db.delete(message)
+        db.commit()
+        db.close()
+
+        logger.info(
+            f"User {current_user.username} deleted message {message_id}")
+
+        return {
+            "status": "success",
+            "message": f"Message deleted successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/messages/{file_id}/read")
 async def mark_message_as_read(
@@ -607,19 +721,20 @@ async def mark_message_as_read(
     try:
         from database import SessionLocal
         from models_db import SMSDB
-        
+
         db = SessionLocal()
         result = db.query(SMSDB).filter(SMSDB.file_id == file_id).update(
             {"is_read": True, "read_at": datetime.now()}
         )
         db.commit()
         db.close()
-        
+
         if result > 0:
             return {"status": "success", "message": f"Message {file_id} marked as read", "file_id": file_id}
         else:
-            raise HTTPException(status_code=404, detail=f"Message with file_id '{file_id}' not found")
-            
+            raise HTTPException(
+                status_code=404, detail=f"Message with file_id '{file_id}' not found")
+
     except HTTPException:
         raise
     except Exception as e:
@@ -627,6 +742,7 @@ async def mark_message_as_read(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== SMS Sending Endpoints ====================
+
 
 @app.post("/messages/send")
 async def send_sms(
@@ -636,10 +752,10 @@ async def send_sms(
     """Send a single SMS message"""
     try:
         message_id = str(uuid.uuid4())
-        
+
         from database import SessionLocal
         from models_db import SendLog
-        
+
         db = SessionLocal()
         send_log = SendLog(
             message_id=message_id,
@@ -650,11 +766,11 @@ async def send_sms(
             sent_by_user_id=current_user.id,
             sent_at=datetime.now()
         )
-        
+
         db.add(send_log)
         db.commit()
         db.close()
-        
+
         return {
             "status": "success",
             "message_id": message_id,
@@ -662,10 +778,12 @@ async def send_sms(
             "sent_by": current_user.username,
             "timestamp": datetime.now().isoformat()
         }
-        
+
     except Exception as e:
         logger.error(f"Send SMS error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to send message: {str(e)}")
+
 
 @app.post("/messages/send/batch")
 async def send_batch_sms(
@@ -676,14 +794,15 @@ async def send_batch_sms(
     try:
         results = []
         failed = []
-        
+
         for msg in batch_data.messages:
             try:
                 message_id = str(uuid.uuid4())
-                
+
                 from database import SessionLocal
                 from models_db import SendLog
-                
+                from datetime import datetime
+
                 db = SessionLocal()
                 send_log = SendLog(
                     message_id=message_id,
@@ -697,7 +816,7 @@ async def send_batch_sms(
                 db.add(send_log)
                 db.commit()
                 db.close()
-                
+
                 results.append({
                     "to_number": msg.to_number,
                     "status": "success",
@@ -709,7 +828,7 @@ async def send_batch_sms(
                     "status": "failed",
                     "error": str(e)
                 })
-        
+
         return {
             "status": "completed",
             "total": len(batch_data.messages),
@@ -718,10 +837,11 @@ async def send_batch_sms(
             "results": results,
             "failures": failed
         }
-        
+
     except Exception as e:
         logger.error(f"Batch send error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/messages/sent")
 async def get_sent_messages(
@@ -734,18 +854,20 @@ async def get_sent_messages(
         from database import SessionLocal
         from models_db import SendLog
         from sqlalchemy import desc
-        
+
         db = SessionLocal()
-        
+
         if current_user.role == "admin":
             query = db.query(SendLog)
         else:
-            query = db.query(SendLog).filter(SendLog.sent_by_user_id == current_user.id)
-        
+            query = db.query(SendLog).filter(
+                SendLog.sent_by_user_id == current_user.id)
+
         total = query.count()
-        messages = query.order_by(desc(SendLog.sent_at)).limit(limit).offset(offset).all()
+        messages = query.order_by(desc(SendLog.sent_at)).limit(
+            limit).offset(offset).all()
         db.close()
-        
+
         return {
             "total": total,
             "count": len(messages),
@@ -764,42 +886,45 @@ async def get_sent_messages(
                 for m in messages
             ]
         }
-        
+
     except Exception as e:
         logger.error(f"Get sent messages error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Delete Endpoints (Admin Only) ====================
 
+
 @app.delete("/messages/old")
 async def delete_old_messages_endpoint(
-    days: int = Query(..., description="Delete messages older than X days", ge=1, le=365),
+    days: int = Query(...,
+                      description="Delete messages older than X days", ge=1, le=365),
     admin_user=Depends(get_current_admin_user)
 ):
     """Delete messages older than specified days (admin only)"""
     try:
         from database import SessionLocal
         from models_db import SMSDB
-        
-        logger.info(f"Admin {admin_user.username} deleting messages older than {days} days")
-        
+
+        logger.info(
+            f"Admin {admin_user.username} deleting messages older than {days} days")
+
         db = SessionLocal()
         cutoff_date = datetime.now() - timedelta(days=days)
         cutoff_date_str = cutoff_date.strftime("%d/%m/%y")
-        
+
         deleted_by_created = db.query(SMSDB).filter(
             SMSDB.created_at < cutoff_date
         ).delete(synchronize_session=False)
-        
+
         deleted_by_date = db.query(SMSDB).filter(
             SMSDB.date < cutoff_date_str
         ).delete(synchronize_session=False)
-        
+
         db.commit()
         total_deleted = deleted_by_created + deleted_by_date
         remaining_count = db.query(SMSDB).count()
         db.close()
-        
+
         return {
             "status": "success",
             "deleted_count": total_deleted,
@@ -809,39 +934,42 @@ async def delete_old_messages_endpoint(
             "deleted_by_admin": admin_user.username,
             "message": f"Successfully deleted {total_deleted} messages older than {days} days"
         }
-        
+
     except Exception as e:
         logger.error(f"Error deleting old messages: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete messages: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete messages: {str(e)}")
+
 
 @app.get("/messages/old/preview")
 async def preview_old_messages(
-    days: int = Query(30, description="Preview messages older than X days", ge=1, le=365),
+    days: int = Query(
+        30, description="Preview messages older than X days", ge=1, le=365),
     admin_user=Depends(get_current_admin_user)
 ):
     """Preview messages that would be deleted (admin only)"""
     try:
         from database import SessionLocal
         from models_db import SMSDB
-        
+
         db = SessionLocal()
         cutoff_date = datetime.now() - timedelta(days=days)
         cutoff_date_str = cutoff_date.strftime("%d/%m/%y")
-        
+
         old_by_created = db.query(SMSDB).filter(
             SMSDB.created_at < cutoff_date
         ).all()
-        
+
         old_by_date = db.query(SMSDB).filter(
             SMSDB.date < cutoff_date_str
         ).all()
-        
+
         messages_to_delete = {}
         for msg in old_by_created:
             messages_to_delete[msg.id] = msg
         for msg in old_by_date:
             messages_to_delete[msg.id] = msg
-        
+
         preview = []
         for msg in list(messages_to_delete.values())[:20]:
             preview.append({
@@ -854,9 +982,9 @@ async def preview_old_messages(
                 'is_read': msg.is_read,
                 'created_at': msg.created_at.isoformat() if msg.created_at else None
             })
-        
+
         db.close()
-        
+
         return {
             "status": "success",
             "would_delete_count": len(messages_to_delete),
@@ -865,12 +993,13 @@ async def preview_old_messages(
             "preview": preview,
             "note": f"Showing first 20 of {len(messages_to_delete)} messages"
         }
-        
+
     except Exception as e:
         logger.error(f"Error previewing old messages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Statistics Endpoint ====================
+
 
 @app.get("/stats")
 async def get_statistics(current_user=Depends(get_current_active_user)):
@@ -879,21 +1008,23 @@ async def get_statistics(current_user=Depends(get_current_active_user)):
         from database import SessionLocal
         from models_db import SMSDB, User
         from sqlalchemy import func
-        
+
         db = SessionLocal()
-        
+
         total = db.query(func.count(SMSDB.id)).scalar() or 0
-        unread = db.query(func.count(SMSDB.id)).filter(SMSDB.is_read == False).scalar() or 0
+        unread = db.query(func.count(SMSDB.id)).filter(
+            SMSDB.is_read == False).scalar() or 0
         read = total - unread
-        unique_senders = db.query(func.count(func.distinct(SMSDB.number))).scalar() or 0
-        
+        unique_senders = db.query(func.count(
+            func.distinct(SMSDB.number))).scalar() or 0
+
         seven_days_ago = datetime.now() - timedelta(days=7)
         last_7_days = db.query(func.count(SMSDB.id)).filter(
             SMSDB.created_at >= seven_days_ago
         ).scalar() or 0
-        
+
         read_rate = (read / total * 100) if total > 0 else 0
-        
+
         stats = {
             "total_messages": total,
             "unread_messages": unread,
@@ -904,23 +1035,23 @@ async def get_statistics(current_user=Depends(get_current_active_user)):
             "user_role": current_user.role,
             "timestamp": datetime.now().isoformat()
         }
-        
+
         if current_user.role == "admin":
             total_users = db.query(func.count(User.id)).scalar() or 0
-            active_users = db.query(func.count(User.id)).filter(User.is_active == True).scalar() or 0
+            active_users = db.query(func.count(User.id)).filter(
+                User.is_active == True).scalar() or 0
             stats["total_users"] = total_users
             stats["active_users"] = active_users
-        
+
         db.close()
         return stats
-        
+
     except Exception as e:
         logger.error(f"Error in get_statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Contact Management Endpoints ====================
 
-from models_db import Contact
 
 @app.get("/contacts")
 async def get_contacts(
@@ -932,10 +1063,10 @@ async def get_contacts(
     """Get all contacts with search"""
     try:
         from database import SessionLocal
-        
+
         db = SessionLocal()
         query = db.query(Contact)
-        
+
         if search:
             search_term = f"%{search}%"
             query = query.filter(
@@ -949,20 +1080,21 @@ async def get_contacts(
                     Contact.editorial_assistant_name.ilike(search_term)
                 )
             )
-        
+
         total = query.count()
         contacts = query.offset(offset).limit(limit).all()
         db.close()
-        
+
         return {
             "total": total,
             "count": len(contacts),
             "contacts": [c.to_dict() for c in contacts]
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting contacts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/contacts/upload")
 async def upload_contacts(
@@ -972,65 +1104,89 @@ async def upload_contacts(
     """Upload and process Excel contact list (admin only)"""
     try:
         df = pd.read_excel(file.file)
-        
+
         from database import SessionLocal
         db = SessionLocal()
-        
+
         # Clear existing contacts
         db.query(Contact).delete()
-        
+
         contacts_created = 0
-        
+
         for _, row in df.iterrows():
             contact = Contact(
-                country=str(row.get('Country', '')) if pd.notna(row.get('Country')) else None,
-                
-                president_name=str(row.get('President')) if pd.notna(row.get('President')) else None,
-                president_email1=str(row.get('mail 1')) if pd.notna(row.get('mail 1')) else None,
-                president_email2=str(row.get('mail 2')) if pd.notna(row.get('mail 2')) else None,
-                president_tel=str(row.get('tel')) if pd.notna(row.get('tel')) else None,
-                
-                director_name=str(row.get('Director')) if pd.notna(row.get('Director')) else None,
-                director_email1=str(row.get('mail 1.1')) if pd.notna(row.get('mail 1.1')) else None,
-                director_email2=str(row.get('mail 2.1')) if pd.notna(row.get('mail 2.1')) else None,
-                director_tel=str(row.get('tel.1')) if pd.notna(row.get('tel.1')) else None,
-                
-                coordinator_name=str(row.get('coordinator')) if pd.notna(row.get('coordinator')) else None,
-                coordinator_email1=str(row.get('mail 1.2')) if pd.notna(row.get('mail 1.2')) else None,
-                coordinator_email2=str(row.get('mail 2.2')) if pd.notna(row.get('mail 2.2')) else None,
-                coordinator_tel=str(row.get('tel.2')) if pd.notna(row.get('tel.2')) else None,
-                
-                rf_technician_name=str(row.get('RF technician')) if pd.notna(row.get('RF technician')) else None,
-                rf_technician_email1=str(row.get('mail 1.3')) if pd.notna(row.get('mail 1.3')) else None,
-                rf_technician_email2=str(row.get('mail 2.3')) if pd.notna(row.get('mail 2.3')) else None,
-                
-                af_it_name=str(row.get('AF/IT')) if pd.notna(row.get('AF/IT')) else None,
-                af_it_email1=str(row.get('mail 1.4')) if pd.notna(row.get('mail 1.4')) else None,
-                af_it_email2=str(row.get('mail 2.4')) if pd.notna(row.get('mail 2.4')) else None,
-                
-                editorial_assistant_name=str(row.get('editorial assistant')) if pd.notna(row.get('editorial assistant')) else None,
-                editorial_assistant_email1=str(row.get('mail 1.5')) if pd.notna(row.get('mail 1.5')) else None,
-                editorial_assistant_email2=str(row.get('mail 2.5')) if pd.notna(row.get('mail 2.5')) else None,
-                editorial_assistant_tel=str(row.get('tel.3')) if pd.notna(row.get('tel.3')) else None,
-                
+                country=str(row.get('Country', '')) if pd.notna(
+                    row.get('Country')) else None,
+
+                president_name=str(row.get('President')) if pd.notna(
+                    row.get('President')) else None,
+                president_email1=str(row.get('mail 1')) if pd.notna(
+                    row.get('mail 1')) else None,
+                president_email2=str(row.get('mail 2')) if pd.notna(
+                    row.get('mail 2')) else None,
+                president_tel=str(row.get('tel')) if pd.notna(
+                    row.get('tel')) else None,
+
+                director_name=str(row.get('Director')) if pd.notna(
+                    row.get('Director')) else None,
+                director_email1=str(row.get('mail 1.1')) if pd.notna(
+                    row.get('mail 1.1')) else None,
+                director_email2=str(row.get('mail 2.1')) if pd.notna(
+                    row.get('mail 2.1')) else None,
+                director_tel=str(row.get('tel.1')) if pd.notna(
+                    row.get('tel.1')) else None,
+
+                coordinator_name=str(row.get('coordinator')) if pd.notna(
+                    row.get('coordinator')) else None,
+                coordinator_email1=str(row.get('mail 1.2')) if pd.notna(
+                    row.get('mail 1.2')) else None,
+                coordinator_email2=str(row.get('mail 2.2')) if pd.notna(
+                    row.get('mail 2.2')) else None,
+                coordinator_tel=str(row.get('tel.2')) if pd.notna(
+                    row.get('tel.2')) else None,
+
+                rf_technician_name=str(row.get('RF technician')) if pd.notna(
+                    row.get('RF technician')) else None,
+                rf_technician_email1=str(row.get('mail 1.3')) if pd.notna(
+                    row.get('mail 1.3')) else None,
+                rf_technician_email2=str(row.get('mail 2.3')) if pd.notna(
+                    row.get('mail 2.3')) else None,
+
+                af_it_name=str(row.get('AF/IT')
+                               ) if pd.notna(row.get('AF/IT')) else None,
+                af_it_email1=str(row.get('mail 1.4')) if pd.notna(
+                    row.get('mail 1.4')) else None,
+                af_it_email2=str(row.get('mail 2.4')) if pd.notna(
+                    row.get('mail 2.4')) else None,
+
+                editorial_assistant_name=str(row.get('editorial assistant')) if pd.notna(
+                    row.get('editorial assistant')) else None,
+                editorial_assistant_email1=str(row.get('mail 1.5')) if pd.notna(
+                    row.get('mail 1.5')) else None,
+                editorial_assistant_email2=str(row.get('mail 2.5')) if pd.notna(
+                    row.get('mail 2.5')) else None,
+                editorial_assistant_tel=str(row.get('tel.3')) if pd.notna(
+                    row.get('tel.3')) else None,
+
                 created_at=datetime.now(),
                 updated_at=datetime.now()
             )
             db.add(contact)
             contacts_created += 1
-        
+
         db.commit()
         db.close()
-        
+
         return {
             "status": "success",
             "message": f"Successfully imported {contacts_created} contacts",
             "count": contacts_created
         }
-        
+
     except Exception as e:
         logger.error(f"Error uploading contacts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.delete("/contacts/{contact_id}")
 async def delete_contact(
@@ -1041,17 +1197,17 @@ async def delete_contact(
     try:
         from database import SessionLocal
         db = SessionLocal()
-        
+
         contact = db.query(Contact).filter(Contact.id == contact_id).first()
         if not contact:
             raise HTTPException(status_code=404, detail="Contact not found")
-        
+
         db.delete(contact)
         db.commit()
         db.close()
-        
+
         return {"status": "success", "message": "Contact deleted"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1059,6 +1215,7 @@ async def delete_contact(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== Public Endpoints (No Auth Required) ====================
+
 
 @app.get("/")
 def root():
@@ -1079,6 +1236,7 @@ def root():
         "timestamp": datetime.now().isoformat()
     }
 
+
 @app.get("/health")
 def health_check():
     """Health check endpoint (public)"""
@@ -1087,7 +1245,7 @@ def health_check():
         db = SessionLocal()
         db.execute(text("SELECT 1"))
         db.close()
-        
+
         return {
             "status": "healthy",
             "database": "connected",
@@ -1102,20 +1260,58 @@ def health_check():
             "timestamp": datetime.now().isoformat()
         }
 
+# ==================== AES Encrypted Login Endpoint ====================
+
+
+@app.post("/auth/login-encrypted")
+async def login_encrypted(request: Request):
+    """Receive AES encrypted credentials and decrypt"""
+    try:
+        # Parse JSON
+        data = await request.json()
+
+        # Validate required fields
+        if 'encrypted_username' not in data or 'encrypted_password' not in data:
+            raise HTTPException(
+                status_code=400, detail="Missing encrypted fields")
+
+        # Decrypt credentials using CryptoJS format
+        try:
+            decrypted_username = aes_decrypt(data['encrypted_username'])
+            decrypted_password = aes_decrypt(data['encrypted_password'])
+
+            logger.info(
+                f"Successfully decrypted credentials for user: {decrypted_username}")
+
+        except Exception as e:
+            logger.error(f"Decryption error: {e}")
+            raise HTTPException(
+                status_code=400, detail=f"Decryption failed: {str(e)}")
+
+        # Authenticate with decrypted credentials
+        return await login(UserLogin(username=decrypted_username, password=decrypted_password))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in login_encrypted: {e}")
+        raise HTTPException(status_code=400, detail=f"Error: {str(e)}")
+
 # ==================== Database Setup ====================
+
 
 def setup_database():
     """Initialize database tables and create default admin user"""
     try:
         from database import engine
         from models_db import Base, User, SMSDB, SendLog, Contact
-        
+
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created successfully")
-        
+
         from database import SessionLocal
         db = SessionLocal()
-        
+
         admin_exists = db.query(User).filter(User.role == "admin").first()
         if not admin_exists:
             default_admin = User(
@@ -1129,13 +1325,15 @@ def setup_database():
             )
             db.add(default_admin)
             db.commit()
-            logger.info("Default admin user created (username: admin, password: admin123)")
-        
+            logger.info(
+                "Default admin user created (username: admin, password: admin123)")
+
         db.close()
     except Exception as e:
         logger.error(f"Database setup error: {e}")
 
 # ==================== Startup Event ====================
+
 
 def start_watcher_safe():
     """Safe watcher starter"""
@@ -1146,17 +1344,170 @@ def start_watcher_safe():
     except Exception as e:
         logger.error(f"Watcher error: {e}")
 
+
 @app.on_event("startup")
 def startup_event():
     """Start the SMS watcher on startup and setup database"""
     try:
         setup_database()
-        
+
         thread = threading.Thread(target=start_watcher_safe, daemon=True)
         thread.start()
         logger.info("SMS Watcher thread started successfully")
     except Exception as e:
         logger.error(f"Failed to start watcher: {e}")
+
+# ==================== User Update Endpoints ====================
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+
+
+class ProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+
+@app.put("/admin/users/{user_id}")
+async def update_user(
+    user_id: int,
+    user_data: UserUpdate,
+    current_user=Depends(get_current_admin_user)
+):
+    """Update user details (admin only)"""
+    try:
+        from database import SessionLocal
+        from models_db import User
+
+        db = SessionLocal()
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if not user:
+            db.close()
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user_data.full_name is not None:
+            user.full_name = user_data.full_name
+        if user_data.email is not None:
+            existing_email = db.query(User).filter(
+                User.email == user_data.email,
+                User.id != user_id
+            ).first()
+            if existing_email:
+                db.close()
+                raise HTTPException(
+                    status_code=400, detail="Email already in use")
+            user.email = user_data.email
+        if user_data.role is not None:
+            if user_data.role not in ["admin", "user"]:
+                db.close()
+                raise HTTPException(status_code=400, detail="Invalid role")
+            user.role = user_data.role
+
+        user.updated_at = datetime.now()
+        db.commit()
+        db.refresh(user)
+        db.close()
+
+        logger.info(
+            f"Admin {current_user.username} updated user {user.username}")
+
+        return {
+            "status": "success",
+            "message": "User updated successfully",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role,
+                "full_name": user.full_name,
+                "is_active": user.is_active,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "updated_at": user.updated_at.isoformat() if user.updated_at else None
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/auth/profile")
+async def update_profile(
+    profile_data: ProfileUpdate,
+    current_user=Depends(get_current_active_user)
+):
+    """Update current user's own profile"""
+    try:
+        from database import SessionLocal
+        from models_db import User
+
+        db = SessionLocal()
+        user = db.query(User).filter(User.id == current_user.id).first()
+
+        if not user:
+            db.close()
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if profile_data.full_name is not None:
+            user.full_name = profile_data.full_name
+        if profile_data.email is not None:
+            existing_email = db.query(User).filter(
+                User.email == profile_data.email,
+                User.id != current_user.id
+            ).first()
+            if existing_email:
+                db.close()
+                raise HTTPException(
+                    status_code=400, detail="Email already in use")
+            user.email = profile_data.email
+
+        if profile_data.current_password and profile_data.new_password:
+            if not verify_password(profile_data.current_password, user.password_hash):
+                db.close()
+                raise HTTPException(
+                    status_code=401, detail="Current password is incorrect")
+            if len(profile_data.new_password) < 6:
+                db.close()
+                raise HTTPException(
+                    status_code=400, detail="New password must be at least 6 characters")
+            user.password_hash = get_password_hash(profile_data.new_password)
+
+        user.updated_at = datetime.now()
+        db.commit()
+        db.refresh(user)
+        db.close()
+
+        logger.info(f"User {current_user.username} updated their profile")
+
+        return {
+            "status": "success",
+            "message": "Profile updated successfully",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role,
+                "full_name": user.full_name,
+                "is_active": user.is_active,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "updated_at": user.updated_at.isoformat() if user.updated_at else None
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==================== Main Entry Point ====================
 

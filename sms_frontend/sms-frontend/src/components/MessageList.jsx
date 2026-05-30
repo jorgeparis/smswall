@@ -87,6 +87,18 @@ export default function MessageList({
     }
   }, []);
 
+  // Handle message click - automatically mark as read
+  const handleMessageClick = async (msg) => {
+    // If message is unread, mark it as read
+    if (!msg.is_read && onMarkAsRead) {
+      await onMarkAsRead(msg.file_id);
+      // Update local state immediately for better UX
+      msg.is_read = true;
+    }
+    // Open modal
+    setSelectedMessage(msg);
+  };
+
   const toggleSelectMessage = (messageId) => {
     setSelectedMessages((prev) => {
       const newSet = new Set(prev);
@@ -364,8 +376,8 @@ export default function MessageList({
                       selectedMessages.has(msg.id)
                         ? "border-blue-500 bg-blue-500/5"
                         : "border-gray-800 hover:border-gray-600"
-                    }`}
-                    onClick={() => setSelectedMessage(msg)}
+                    } ${!msg.is_read ? "ring-1 ring-blue-500/30" : ""}`}
+                    onClick={() => handleMessageClick(msg)}
                   >
                     {/* Selection Checkbox */}
                     <div className="absolute left-4 top-1/2 transform -translate-y-1/2">

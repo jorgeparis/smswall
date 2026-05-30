@@ -44,8 +44,8 @@ class SMSDB(Base):
             'message_length': self.message_length
         }
 
-# ==================== User Model for Authentication ====================
 
+# ==================== User Model for Authentication ====================
 
 class User(Base):
     __tablename__ = "users"
@@ -59,6 +59,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
     last_login = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username}, role={self.role}, is_active={self.is_active})>"
@@ -73,11 +74,12 @@ class User(Base):
             'full_name': self.full_name,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'last_login': self.last_login.isoformat() if self.last_login else None
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
-# ==================== Optional: Send Logs Model for SMS Sending History ====================
 
+# ==================== Optional: Send Logs Model for SMS Sending History ====================
 
 class SendLog(Base):
     __tablename__ = "send_logs"
@@ -87,11 +89,9 @@ class SendLog(Base):
     to_number = Column(String(20), nullable=False, index=True)
     message = Column(Text, nullable=False)
     sender_id = Column(String(20), nullable=True)
-    # pending, sent, failed, delivered
-    status = Column(String(50), default='pending')
+    status = Column(String(50), default='pending')  # pending, sent, failed, delivered
     error = Column(Text, nullable=True)
-    sent_by_user_id = Column(Integer, nullable=False,
-                             index=True)  # Foreign key to User.id
+    sent_by_user_id = Column(Integer, nullable=False, index=True)  # Foreign key to User.id
     sent_at = Column(DateTime, default=datetime.now)
     delivered_at = Column(DateTime, nullable=True)
 
@@ -113,46 +113,49 @@ class SendLog(Base):
             'delivered_at': self.delivered_at.isoformat() if self.delivered_at else None
         }
 
+
+# ==================== Contact Model ====================
+
 class Contact(Base):
     __tablename__ = "contacts"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     country = Column(String(100), index=True)
-    
+
     # President
     president_name = Column(String(200), nullable=True)
     president_email1 = Column(String(200), nullable=True)
     president_email2 = Column(String(200), nullable=True)
     president_tel = Column(String(50), nullable=True)
-    
+
     # Director
     director_name = Column(String(200), nullable=True)
     director_email1 = Column(String(200), nullable=True)
     director_email2 = Column(String(200), nullable=True)
     director_tel = Column(String(50), nullable=True)
-    
+
     # Coordinator
     coordinator_name = Column(String(200), nullable=True)
     coordinator_email1 = Column(String(200), nullable=True)
     coordinator_email2 = Column(String(200), nullable=True)
     coordinator_tel = Column(String(50), nullable=True)
-    
+
     # RF Technician
     rf_technician_name = Column(String(200), nullable=True)
     rf_technician_email1 = Column(String(200), nullable=True)
     rf_technician_email2 = Column(String(200), nullable=True)
-    
+
     # AF/IT
     af_it_name = Column(String(200), nullable=True)
     af_it_email1 = Column(String(200), nullable=True)
     af_it_email2 = Column(String(200), nullable=True)
-    
+
     # Editorial Assistant
     editorial_assistant_name = Column(String(200), nullable=True)
     editorial_assistant_email1 = Column(String(200), nullable=True)
     editorial_assistant_email2 = Column(String(200), nullable=True)
     editorial_assistant_tel = Column(String(50), nullable=True)
-    
+
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

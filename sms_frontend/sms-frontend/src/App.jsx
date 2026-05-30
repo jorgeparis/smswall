@@ -10,6 +10,16 @@ import Stats from "./components/Stats";
 
 const API_BASE = "http://localhost:8000";
 
+// In App.jsx
+const [isPremium, setIsPremium] = useState(false);
+const [showRadioPlayer, setShowRadioPlayer] = useState(false);
+
+// Check premium status from localStorage
+useEffect(() => {
+  const premium = localStorage.getItem("isPremium") === "true";
+  setIsPremium(premium);
+}, []);
+
 // Helper functions
 const getAuthToken = () => sessionStorage.getItem("access_token");
 const setAuthToken = (token) =>
@@ -306,30 +316,32 @@ function App() {
     [refreshAllData, isLoggedIn]
   );
 
-  // Login function
+  // UPDATED: Login function - NO API call, just verify token from sessionStorage
   const handleLogin = async (username, password) => {
-    try {
-      const response = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password })
-      });
+    // The Login component already:
+    // 1. Encrypted the credentials
+    // 2. Called /auth/login-encrypted
+    // 3. Stored the token in sessionStorage
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || "Login failed");
-      }
-      const data = await response.json();
-      setAuthToken(data.access_token);
-      setUser(data.user);
-      setIsLoggedIn(true);
-      toast.success(`Welcome back, ${data.user.username}!`);
-      await loadInitialData();
-      return true;
-    } catch (err) {
-      toast.error(err.message);
+    // Just verify the token exists and load data
+    const token = getAuthToken();
+    const storedUser = getUser();
+
+    if (!token || !storedUser) {
+      toast.error("Login failed - authentication error");
       return false;
     }
+
+    // Set user from sessionStorage (already stored by Login component)
+    setUser(storedUser);
+    setIsLoggedIn(true);
+
+    toast.success(`Welcome back, ${storedUser.username}!`);
+
+    // Load messages after login
+    await loadInitialData();
+
+    return true;
   };
 
   // Load initial data

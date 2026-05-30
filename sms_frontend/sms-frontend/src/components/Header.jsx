@@ -16,7 +16,27 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import SmsWallIcon from "./SmallIcone";
+
+// Import the SMS Wall icon component
+const SmsWallIcon = ({ className, size }) => (
+  <svg
+    className={className}
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2Z"
+      fill="currentColor"
+      fillOpacity="0.8"
+    />
+    <rect x="6" y="8" width="12" height="2" rx="1" fill="currentColor" />
+    <rect x="6" y="12" width="8" height="2" rx="1" fill="currentColor" />
+    <circle cx="17" cy="13" r="1.5" fill="currentColor" />
+  </svg>
+);
 
 export default function Header({
   newCount = 0,
@@ -123,12 +143,16 @@ export default function Header({
 
     for (const endpoint of endpoints) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
         const response = await fetch(endpoint, {
           method: "GET",
           mode: "cors",
-          signal: AbortSignal.timeout(3000)
+          signal: controller.signal
         });
-
+        
+        clearTimeout(timeoutId);
         const endTime = performance.now();
         const latency = Math.round(endTime - startTime);
 
@@ -371,6 +395,11 @@ export default function Header({
                         >
                           Retry Connection
                         </button>
+                      )}
+                      {errorMessage && (
+                        <div className="mt-2 text-[10px] text-red-400 break-all">
+                          Error: {errorMessage}
+                        </div>
                       )}
                     </div>
                   </div>
